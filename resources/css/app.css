@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    html { @apply antialiased; }
+    body { @apply bg-surface-50 text-surface-900 font-sans; }
+    * { @apply border-surface-200; }
+}
+
+@layer components {
+    /* Scrollbars */
+    .scrollbar-thin::-webkit-scrollbar        { width: 4px; height: 4px; }
+    .scrollbar-thin::-webkit-scrollbar-track  { @apply bg-transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb  { @apply bg-surface-200 rounded-full; }
+
+    /* Chat bubbles */
+    .bubble-in  { @apply bg-white border border-surface-100 text-surface-900 rounded-2xl rounded-tl-sm; }
+    .bubble-out { @apply bg-brand-500 text-white rounded-2xl rounded-tr-sm; }
+
+    /* Badge */
+    .badge { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium; }
+
+    /* Status dots */
+    .dot-connected    { @apply w-2 h-2 rounded-full bg-brand-500 animate-pulse-dot; }
+    .dot-disconnected { @apply w-2 h-2 rounded-full bg-red-400; }
+    .dot-qr           { @apply w-2 h-2 rounded-full bg-amber-400 animate-pulse-dot; }
+}
+
+/* Inertia progress */
+#nprogress .bar { @apply bg-brand-500 !important; }
