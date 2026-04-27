@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AuditLog;
+use App\Models\Company;
 use App\Models\Customer;
 use App\Models\Message;
 use App\Models\WhatsappSession;
@@ -14,10 +15,16 @@ class GatewayService
     private string $baseUrl;
     private string $secret;
 
-    public function __construct()
+    public function __construct(private ?Company $company = null)
     {
-        $this->baseUrl = rtrim(config('whatsapp.gateway_url'), '/');
-        $this->secret = config('whatsapp.gateway_secret');
+        if ($company) {
+            $this->baseUrl = rtrim($company->gateway_url, '/');
+            $this->secret = $company->gateway_secret;
+        } else {
+            // Fallback to .env for backwards compat during migration
+            $this->baseUrl = rtrim(config('whatsapp.gateway_url'), '/');
+            $this->secret = config('whatsapp.gateway_secret');
+        }
     }
 
     private function headers(): array
@@ -125,6 +132,14 @@ class GatewayService
         };
     }
 
+    public function setCompany(Company $company): static
+    {
+        $this->company = $company;
+        $this->baseUrl = rtrim($company->gateway_url, '/');
+        $this->secret = $company->gateway_secret;
+        return $this;
+    }
+
     private function handleIncomingMessage(array $data): void
     {
         // ── Deduplicate: ignore if we already stored this WA message ─────────
@@ -135,14 +150,21 @@ class GatewayService
         }
 
         $phone = preg_replace('/\D/', '', $data['from']);
-        $customer = Customer::where('phone', $phone)->first();
+        $customer = Customer::where('phone', $phone)
+            ->where('company_id', $this->company?->id)
+            ->first();
 
         if (!$customer) {
             // Auto-create customer from unknown number
+            $defaultAssignee = \App\Models\User::role('admin')->first()?->id
+                ?? \App\Models\User::role('executive')->first()?->id;
+
             $customer = Customer::create([
                 'name' => "Unknown ({$phone})",
                 'phone' => $phone,
                 'status' => 'active',
+                'company_id' => $this->company?->id,
+                'assigned_to' => $defaultAssignee,
             ]);
         }
 
@@ -170,9 +192,12 @@ class GatewayService
 
         // Broadcast real-time update to assigned executive
         $message->load('customer', 'document');
-        
-        broadcast(new \App\Events\NewMessageReceived($message));
-        broadcast(new \App\Events\NewInboundMessage($message));
+        try {
+            broadcast(new \App\Events\NewMessageReceived($message));
+            broadcast(new \App\Events\NewInboundMessage($message));
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast failed for inbound message ' . $message->id . ': ' . $e->getMessage());
+        }
 
         AuditLog::create([
             'action' => 'message.received',
@@ -225,35 +250,41 @@ class GatewayService
 
     private function handleQrGenerated(array $payload): void
     {
-        WhatsappSession::create([
-            'status' => 'qr_ready',
-            'qr_code' => $payload['qr'] ?? null,
-        ]);
-
-        broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null));
+        WhatsappSession::updateOrCreate(
+            ['id' => 1], // Single-row singleton
+            ['status' => 'qr_ready', 'qr_code' => $payload['qr'] ?? null, 'disconnected_at' => null]
+        );
+        try {
+            broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null));
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast failed: ' . $e->getMessage());
+        }
     }
 
     private function handleSessionReady(array $payload): void
     {
-        WhatsappSession::create([
-            'status' => 'connected',
-            'phone' => $payload['phone'] ?? null,
-            'connected_at' => now(),
-            'qr_code' => null,
-        ]);
-
-        broadcast(new \App\Events\WhatsAppStatusChanged('connected'));
+        WhatsappSession::updateOrCreate(
+            ['id' => 1],
+            ['status' => 'connected', 'phone' => $payload['phone'] ?? null, 'connected_at' => now(), 'qr_code' => null, 'disconnected_at' => null]
+        );
+        try {
+            broadcast(new \App\Events\WhatsAppStatusChanged('connected'));
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast failed: ' . $e->getMessage());
+        }
     }
 
     private function handleSessionDisconnected(array $payload): void
     {
-        WhatsappSession::create([
-            'status' => 'disconnected',
-            'disconnected_at' => now(),
-            'disconnect_reason' => $payload['reason'] ?? null,
-        ]);
-
-        broadcast(new \App\Events\WhatsAppStatusChanged('disconnected'));
+        WhatsappSession::updateOrCreate(
+            ['id' => 1],
+            ['status' => 'disconnected', 'disconnected_at' => now(), 'disconnect_reason' => $payload['reason'] ?? null, 'qr_code' => null]
+        );
+        try {
+            broadcast(new \App\Events\WhatsAppStatusChanged('disconnected'));
+        } catch (\Throwable $e) {
+            Log::warning('Broadcast failed: ' . $e->getMessage());
+        }
     }
 
     private function handleAuthFailure(array $payload): void

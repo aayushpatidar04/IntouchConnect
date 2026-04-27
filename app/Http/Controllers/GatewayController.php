@@ -6,10 +6,13 @@ use App\Services\GatewayService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use App\Models\Company;
 
 class GatewayController extends Controller
 {
-    public function __construct(private GatewayService $gateway) {}
+    public function __construct(private GatewayService $gateway)
+    {
+    }
 
     public function webhook(Request $request): JsonResponse
     {
@@ -31,6 +34,29 @@ class GatewayController extends Controller
             return response()->json(['ok' => true]);
         } catch (\Throwable $e) {
             Log::error('Webhook handling error: ' . $e->getMessage(), $payload);
+            return response()->json(['error' => 'Internal error'], 500);
+        }
+    }
+
+    public function companyWebhook(Request $request, Company $company): JsonResponse
+    {
+        $secret = $request->header('X-Gateway-Secret');
+
+        if ($secret !== $company->gateway_secret) {
+            Log::warning("Invalid gateway secret for company {$company->id} from " . $request->ip());
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        $payload = $request->all();
+        if (empty($payload['event'])) {
+            return response()->json(['error' => 'Missing event'], 400);
+        }
+
+        try {
+            $this->gateway->setCompany($company)->handleWebhook($payload);
+            return response()->json(['ok' => true]);
+        } catch (\Throwable $e) {
+            Log::error("Webhook error for company {$company->id}: " . $e->getMessage(), $payload);
             return response()->json(['error' => 'Internal error'], 500);
         }
     }

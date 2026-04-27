@@ -20,6 +20,7 @@ class User extends Authenticatable
         'avatar',
         'is_active',
         'last_seen_at',
+        'company_id',
     ];
 
     protected $hidden = ['password', 'remember_token'];
@@ -28,9 +29,9 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
-            'last_seen_at'      => 'datetime',
-            'password'          => 'hashed',
-            'is_active'         => 'boolean',
+            'last_seen_at' => 'datetime',
+            'password' => 'hashed',
+            'is_active' => 'boolean',
         ];
     }
 
@@ -55,5 +56,10 @@ class User extends Authenticatable
             return asset('storage/' . $this->avatar);
         }
         return 'https://ui-avatars.com/api/?name=' . urlencode($this->name) . '&background=10b981&color=fff';
+    }
+
+    public function company(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }

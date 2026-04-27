@@ -13,12 +13,13 @@ class WhatsappSession extends Model
         'connected_at',
         'disconnected_at',
         'disconnect_reason',
+        'company_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'connected_at'    => 'datetime',
+            'connected_at' => 'datetime',
             'disconnected_at' => 'datetime',
         ];
     }
@@ -31,5 +32,10 @@ class WhatsappSession extends Model
     public function isConnected(): bool
     {
         return $this->status === 'connected';
+    }
+
+    public function company(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }

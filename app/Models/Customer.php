@@ -6,11 +6,23 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Customer extends Model
 {
     use HasFactory, SoftDeletes;
+
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new \App\Scopes\CompanyScope());
+
+        static::creating(function ($customer) {
+            if (auth()->check() && !$customer->company_id) {
+                $customer->company_id = auth()->user()->company_id;
+            }
+        });
+    }
 
     protected $fillable = [
         'assigned_to',
@@ -22,13 +34,14 @@ class Customer extends Model
         'status',
         'tags',
         'last_contacted_at',
+        'company_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'tags'               => 'array',
-            'last_contacted_at'  => 'datetime',
+            'tags' => 'array',
+            'last_contacted_at' => 'datetime',
         ];
     }
 
@@ -42,9 +55,9 @@ class Customer extends Model
         return $this->hasMany(Message::class)->orderBy('created_at');
     }
 
-    public function latestMessage(): HasMany
+    public function latestMessage(): HasOne
     {
-        return $this->hasMany(Message::class)->latest()->limit(1);
+        return $this->hasOne(Message::class)->latestOfMany();
     }
 
     public function documents(): HasMany
@@ -63,5 +76,10 @@ class Customer extends Model
     public function getFormattedPhoneAttribute(): string
     {
         return '+' . ltrim($this->phone, '+');
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }

@@ -11,6 +11,17 @@ class Message extends Model
 {
     use HasFactory;
 
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new \App\Scopes\CompanyScope());
+
+        static::creating(function ($customer) {
+            if (auth()->check() && !$customer->company_id) {
+                $customer->company_id = auth()->user()->company_id;
+            }
+        });
+    }
+
     protected $fillable = [
         'customer_id',
         'sent_by',
@@ -24,13 +35,14 @@ class Message extends Model
         'is_forwarded',
         'delivered_at',
         'read_at',
+        'company_id',
     ];
 
     protected function casts(): array
     {
         return [
             'delivered_at' => 'datetime',
-            'read_at'      => 'datetime',
+            'read_at' => 'datetime',
             'is_forwarded' => 'boolean',
         ];
     }
@@ -58,5 +70,10 @@ class Message extends Model
     public function getIsOutboundAttribute(): bool
     {
         return $this->direction === 'outbound';
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }
