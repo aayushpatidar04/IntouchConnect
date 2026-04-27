@@ -69,6 +69,8 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <slot name="actions" />
+                    <!-- CHANGED: Notification bell -->
+                    <NotificationBell />
                     <!-- Logout -->
                     <Link :href="route('logout')" method="post" as="button"
                         class="text-xs text-surface-400 hover:text-surface-700 transition-colors px-2 py-1 rounded-lg hover:bg-surface-100">
@@ -91,8 +93,12 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { Link, usePage } from '@inertiajs/vue3';
+// CHANGED: Added notification store and bell component imports
 import { useWhatsAppStore } from '@/Stores/whatsapp';
 import { useChannel } from '@/Composables/useEcho';
+import { useNotificationStore } from '@/Stores/notifications';
+import NotificationBell from '@/Components/UI/NotificationBell.vue';
+import { useToast } from '@/Composables/useToast';
 import NavItem from '@/Components/Layout/NavItem.vue';
 import ToastStack from '@/Components/UI/ToastStack.vue';
 
@@ -108,12 +114,43 @@ defineProps({ title: String });
 
 const sidebarOpen = ref(true);
 const page = usePage();
-const wa = useWhatsAppStore();
+const wa      = useWhatsAppStore();
+const notifStore = useNotificationStore();
+const { info }   = useToast();
 
 onMounted(() => {
     wa.fetchStatus();
     setInterval(wa.fetchStatus, 30000);
 });
+
+// ── CHANGED: Listen for inbound message notifications ─────────────────────────
+// Admin hears everything on admin-notifications channel
+// Executive hears their own notifications on executive-notifications.{id} channel
+const userRoles = page.props.auth.user.roles ?? [];
+const userId    = page.props.auth.user.id;
+
+// Admin/auditor: subscribe to admin-notifications
+if (userRoles.includes('admin') || userRoles.includes('auditor')) {
+    useChannel('admin-notifications', {
+        'new.message': (data) => {
+            notifStore.add(data);
+            // Show toast for unassigned messages (needs attention)
+            if (data.is_unassigned) {
+                info(`📲 New message from unassigned customer: ${data.customer_name}`);
+            }
+        },
+    });
+}
+
+// Executive: subscribe to their own channel
+if (userRoles.includes('executive')) {
+    useChannel(`executive-notifications.${userId}`, {
+        'new.message': (data) => {
+            notifStore.add(data);
+            info(`💬 New message from ${data.customer_name}`);
+        },
+    });
+}
 
 // Listen for real-time WhatsApp status changes
 useChannel('whatsapp-status', {

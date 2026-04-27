@@ -169,7 +169,9 @@ class GatewayService
         }
 
         // Broadcast real-time update to assigned executive
-        broadcast(new \App\Events\NewMessageReceived($message->load('customer', 'document')));
+        $message->load('customer', 'document');
+        broadcast(new \App\Events\NewMessageReceived($message));
+        broadcast(new \App\Events\NewInboundMessage($message));
 
         AuditLog::create([
             'action' => 'message.received',
