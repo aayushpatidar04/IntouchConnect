@@ -6,11 +6,11 @@ use App\Models\Message;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PresenceChannel;
-use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
-class NewMessageReceived implements ShouldBroadcast
+class NewMessageReceived implements ShouldBroadcastNow
 {
     use Dispatchable, InteractsWithSockets, SerializesModels;
 
@@ -18,6 +18,7 @@ class NewMessageReceived implements ShouldBroadcast
 
     public function broadcastOn(): array
     {
+        
         $assignedTo = $this->message->customer->assigned_to;
         $channels   = [new Channel('messages')];
 

@@ -170,6 +170,7 @@ class GatewayService
 
         // Broadcast real-time update to assigned executive
         $message->load('customer', 'document');
+        
         broadcast(new \App\Events\NewMessageReceived($message));
         broadcast(new \App\Events\NewInboundMessage($message));
 
