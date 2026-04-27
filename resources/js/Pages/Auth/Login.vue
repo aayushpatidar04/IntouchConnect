@@ -20,7 +20,7 @@
                     </svg>
                 </div>
                 <h1 class="text-2xl font-bold text-white tracking-tight">WhatsApp CRM</h1>
-                <p class="text-sm text-surface-400 mt-1">Sign in to your workspace</p>
+                <p class="text-sm text-surface-400 mt-1 text-white">Sign in to your workspace</p>
             </div>
 
             <!-- Login form -->
