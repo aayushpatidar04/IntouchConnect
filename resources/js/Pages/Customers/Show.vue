@@ -146,7 +146,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import AppLayout from '@/Components/Layout/AppLayout.vue';
@@ -176,6 +176,10 @@ const avatarUrl = computed(() =>
 async function markRead() {
     await axios.post(route('messages.mark-read', props.customer.id));
 }
+
+onMounted(() => {
+    markRead(); // mark all as read when chat window loads
+});
 
 // Called by ChatWindow after a document is staged/sent
 function refreshDocs() {

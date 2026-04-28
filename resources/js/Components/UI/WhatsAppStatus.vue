@@ -20,7 +20,8 @@ defineProps({
     <div v-if="store.status === 'qr_ready' && isAdmin"
       class="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
       <span class="dot-qr" />
-      <button class="text-xs font-medium text-yellow-600 capitalize" @click="showQrPopup = true">{{ store.status.replace('_', ' ') }}</button >
+      <button class="text-xs font-medium text-yellow-600 capitalize" @click="showQrPopup = true">{{
+        store.status.replace('_', ' ') }}</button>
       <button @click="store.fetchStatus()" class="ml-auto text-xs text-surface-500 hover:text-surface-700">
         Refresh
       </button>
@@ -41,8 +42,9 @@ defineProps({
     <div v-else class="flex items-center gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2">
       <span class="dot-disconnected" />
       <span class="text-xs font-medium text-red-600 capitalize">{{ store.status.replace('_', ' ') }}</span>
-      <button @click="store.fetchStatus()" class="ml-auto text-xs text-surface-500 hover:text-surface-700">
-        Refresh
+      <button @click="store.createSession()" :disabled="store.loading"
+        class="ml-auto text-xs font-medium text-brand-600 hover:text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2 py-1 transition-colors disabled:opacity-50">
+        {{ store.loading ? 'Connecting…' : 'Connect WhatsApp' }}
       </button>
     </div>
 

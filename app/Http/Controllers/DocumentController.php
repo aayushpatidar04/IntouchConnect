@@ -9,10 +9,8 @@ use App\Services\AuditService;
 use App\Services\DocumentService;
 use App\Services\GatewayService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Inertia\Inertia;
 
 class DocumentController extends Controller
 {
@@ -26,18 +24,18 @@ class DocumentController extends Controller
         $this->authorize('view', $customer);
 
         $request->validate([
-            'file' => 'required|file|max:20480', // 20MB
+            'file' => 'required|file|max:20480', // 20 MB
         ]);
 
         $document = $this->docService->saveManualUpload(
             customer: $customer,
-            file: $request->file('file'),
-            userId: auth()->id()
+            file:     $request->file('file'),
+            userId:   auth()->id()
         );
 
         AuditService::log('document.uploaded', $document, [], [
             'customer_id' => $customer->id,
-            'filename' => $document->original_filename,
+            'filename'    => $document->original_filename,
         ]);
 
         return response()->json([
@@ -57,29 +55,28 @@ class DocumentController extends Controller
             'caption' => 'nullable|string|max:1024',
         ]);
 
-        // Check WhatsApp is connected
-        $status = $this->gateway->getStatus();
+        // Set company context
+        $this->gateway->forAuthUser();
+        $status = $this->gateway->getCompanyStatus();
         if (empty($status['is_ready'])) {
-            return response()->json(['error' => 'WhatsApp is not connected.'], 503);
+            return response()->json(['error' => 'WhatsApp is not connected for your company.'], 503);
         }
 
-        // Create the outbound message record linked to the document
         $message = Message::create([
+            'company_id'  => auth()->user()->company_id,
+            'session_id'  => auth()->user()->company?->session_id,
             'customer_id' => $customer->id,
-            'sent_by' => auth()->id(),
-            'direction' => 'outbound',
-            'type' => $this->typeFromMime($document->mime_type),
-            'body' => $data['caption'] ?? '',
-            'status' => 'pending',
+            'sent_by'     => auth()->id(),
+            'direction'   => 'outbound',
+            'type'        => $this->typeFromMime($document->mime_type),
+            'body'        => $data['caption'] ?? '',
+            'status'      => 'pending',
         ]);
 
-        // Link document to this outbound message
         $document->update(['message_id' => $message->id]);
 
-        // Decrypt to a temp file so the gateway can read it
         try {
             $decrypted = $this->docService->getDecryptedContent($document);
-
             $safeName  = preg_replace('/[^a-zA-Z0-9._-]/', '_', $document->original_filename);
             $tmpPath   = sys_get_temp_dir() . '/' . $safeName;
             file_put_contents($tmpPath, $decrypted);
@@ -93,11 +90,10 @@ class DocumentController extends Controller
             );
 
             $message->update([
-                'status' => 'queued',
+                'status'         => 'queued',
                 'gateway_job_id' => $result['job_id'] ?? null,
             ]);
 
-            // Mark document as approved — executive actively sent it
             $document->update(['status' => 'approved']);
 
         } catch (\Throwable $e) {
@@ -112,11 +108,11 @@ class DocumentController extends Controller
         $customer->update(['last_contacted_at' => now()]);
         AuditService::log('document.sent', $document, [], [
             'customer_id' => $customer->id,
-            'message_id' => $message->id,
+            'message_id'  => $message->id,
         ]);
 
         return response()->json([
-            'message' => $message->load('sentBy'),
+            'message'  => $message->load('sentBy'),
             'document' => $document->fresh(),
         ]);
     }
@@ -126,63 +122,38 @@ class DocumentController extends Controller
         $this->authorize('view', $document->customer);
 
         AuditService::log('document.downloaded', $document);
-
-        $content = $this->docService->getDecryptedContent($document);
-
+        $content  = $this->docService->getDecryptedContent($document);
         $filename = $document->original_filename;
-        $extension = pathinfo($filename, PATHINFO_EXTENSION);
+        $ext      = pathinfo($filename, PATHINFO_EXTENSION);
 
-        if (empty($extension)) {
-            // fallback: use mime type to guess extension
+        if (empty($ext)) {
             $mimeMap = [
-                // Documents
-                'application/pdf' => 'pdf',
-                'application/msword' => 'doc',
+                'application/pdf'      => 'pdf',
+                'application/msword'   => 'doc',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
                 'application/vnd.ms-excel' => 'xls',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
-                'application/vnd.ms-powerpoint' => 'ppt',
-                'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'pptx',
-                'text/plain' => 'txt',
-                'text/csv' => 'csv',
-                'application/rtf' => 'rtf',
-
-                // Images
-                'image/jpeg' => 'jpg',
-                'image/png' => 'png',
-                'image/gif' => 'gif',
-                'image/webp' => 'webp',
-                'image/bmp' => 'bmp',
-                'image/tiff' => 'tiff',
-
-                // Audio
-                'audio/mpeg' => 'mp3',
-                'audio/ogg' => 'ogg',
-                'audio/wav' => 'wav',
-                'audio/aac' => 'aac',
-                'audio/flac' => 'flac',
-                'audio/mp4' => 'm4a',
-
-                // Video
-                'video/mp4' => 'mp4',
-                'video/3gpp' => '3gp',
-                'video/x-msvideo' => 'avi',
-                'video/x-matroska' => 'mkv',
-                'video/webm' => 'webm',
-                'video/mpeg' => 'mpeg',
+                'text/plain'           => 'txt',
+                'text/csv'             => 'csv',
+                'image/jpeg'           => 'jpg',
+                'image/png'            => 'png',
+                'image/gif'            => 'gif',
+                'image/webp'           => 'webp',
+                'audio/mpeg'           => 'mp3',
+                'audio/ogg'            => 'ogg',
+                'audio/wav'            => 'wav',
+                'video/mp4'            => 'mp4',
+                'video/3gpp'           => '3gp',
             ];
-
-
-            $guessed = $mimeMap[$document->mime_type] ?? null;
-            if ($guessed) {
+            if ($guessed = $mimeMap[$document->mime_type] ?? null) {
                 $filename .= '.' . $guessed;
             }
         }
 
         return response($content, 200, [
-            'Content-Type' => $document->mime_type,
+            'Content-Type'        => $document->mime_type,
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            'Content-Length' => strlen($content),
+            'Content-Length'      => strlen($content),
         ]);
     }
 
@@ -192,7 +163,7 @@ class DocumentController extends Controller
 
         $data = $request->validate([
             'status' => 'required|in:pending,approved,rejected',
-            'notes' => 'nullable|string',
+            'notes'  => 'nullable|string',
         ]);
 
         $old = $document->only(['status', 'notes']);
@@ -217,7 +188,7 @@ class DocumentController extends Controller
             str_contains($mime, 'image') => 'image',
             str_contains($mime, 'video') => 'video',
             str_contains($mime, 'audio') => 'audio',
-            default => 'document',
+            default                      => 'document',
         };
     }
 }

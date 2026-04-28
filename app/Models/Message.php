@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Scopes\CompanyScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,18 +12,9 @@ class Message extends Model
 {
     use HasFactory;
 
-    protected static function booted(): void
-    {
-        static::addGlobalScope(new \App\Scopes\CompanyScope());
-
-        static::creating(function ($customer) {
-            if (auth()->check() && !$customer->company_id) {
-                $customer->company_id = auth()->user()->company_id;
-            }
-        });
-    }
-
     protected $fillable = [
+        'company_id',
+        'session_id',
         'customer_id',
         'sent_by',
         'whatsapp_message_id',
@@ -35,17 +27,30 @@ class Message extends Model
         'is_forwarded',
         'delivered_at',
         'read_at',
-        'company_id',
     ];
 
     protected function casts(): array
     {
         return [
             'delivered_at' => 'datetime',
-            'read_at' => 'datetime',
+            'read_at'      => 'datetime',
             'is_forwarded' => 'boolean',
         ];
     }
+
+    // ── Global Scope ──────────────────────────────────────────────────────────
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new CompanyScope());
+
+        static::creating(function ($message) {
+            if (empty($message->company_id) && auth()->check() && auth()->user()->company_id) {
+                $message->company_id = auth()->user()->company_id;
+            }
+        });
+    }
+
+    // ── Relationships ─────────────────────────────────────────────────────────
 
     public function customer(): BelongsTo
     {
@@ -62,6 +67,8 @@ class Message extends Model
         return $this->hasOne(Document::class);
     }
 
+    // ── Accessors ─────────────────────────────────────────────────────────────
+
     public function getIsInboundAttribute(): bool
     {
         return $this->direction === 'inbound';
@@ -70,10 +77,5 @@ class Message extends Model
     public function getIsOutboundAttribute(): bool
     {
         return $this->direction === 'outbound';
-    }
-
-    public function company(): BelongsTo
-    {
-        return $this->belongsTo(Company::class);
     }
 }

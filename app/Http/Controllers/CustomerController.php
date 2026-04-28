@@ -14,20 +14,21 @@ class CustomerController extends Controller
 {
     public function index(Request $request): Response
     {
-        $query = Customer::with(['assignedTo', 'latestMessage'])
-            ->withCount('documents');
+        $user  = auth()->user();
+        $query = Customer::with(['assignedTo', 'latestMessage'])->withCount('documents');
 
-        // Role-based filtering
-        if (auth()->user()->hasRole('executive')) {
-            $query->where('assigned_to', auth()->id());
+        // Executives only see their own assigned customers
+        if ($user->hasRole('executive')) {
+            $query->where('assigned_to', $user->id);
         }
+        // Admin + auditor see all customers in their company (CompanyScope handles this)
 
         if ($request->search) {
             $query->where(function ($q) use ($request) {
-                $q->where('name', 'like', "%{$request->search}%")
-                    ->orWhere('phone', 'like', "%{$request->search}%")
-                    ->orWhere('email', 'like', "%{$request->search}%")
-                    ->orWhere('company', 'like', "%{$request->search}%");
+                $q->where('name',    'like', "%{$request->search}%")
+                  ->orWhere('phone', 'like', "%{$request->search}%")
+                  ->orWhere('email', 'like', "%{$request->search}%")
+                  ->orWhere('company', 'like', "%{$request->search}%");
             });
         }
 
@@ -41,9 +42,15 @@ class CustomerController extends Controller
 
         $customers = $query->orderByDesc('last_contacted_at')->paginate(20)->withQueryString();
 
+        // Executives list — scoped to same company
+        $executives = User::where('company_id', $user->company_id)
+            ->role('executive')
+            ->select('id', 'name')
+            ->get();
+
         return Inertia::render('Customers/Index', [
             'customers'  => $customers,
-            'executives' => User::role('executive')->select('id', 'name')->get(),
+            'executives' => $executives,
             'filters'    => $request->only(['search', 'status', 'assigned_to']),
         ]);
     }
@@ -64,11 +71,16 @@ class CustomerController extends Controller
             ->orderByDesc('created_at')
             ->get();
 
+        $executives = User::where('company_id', auth()->user()->company_id)
+            ->role('executive')
+            ->select('id', 'name')
+            ->get();
+
         return Inertia::render('Customers/Show', [
             'customer'   => $customer->load('assignedTo'),
             'messages'   => $messages,
             'documents'  => $documents,
-            'executives' => User::role('executive')->select('id', 'name')->get(),
+            'executives' => $executives,
         ]);
     }
 
@@ -76,13 +88,23 @@ class CustomerController extends Controller
     {
         $data = $request->validate([
             'name'        => 'required|string|max:191',
-            'phone'       => 'required|string|max:20|unique:customers,phone',
+            'phone'       => 'required|string|max:20',
             'email'       => 'nullable|email|max:191',
             'company'     => 'nullable|string|max:191',
             'notes'       => 'nullable|string',
             'assigned_to' => 'nullable|exists:users,id',
             'status'      => 'in:active,inactive,blocked',
         ]);
+
+        // Phone must be unique within this company (not globally)
+        $phone = preg_replace('/\D/', '', $data['phone']);
+        $exists = Customer::where('phone', $phone)->exists();
+        if ($exists) {
+            return back()->withErrors(['phone' => 'This phone number already exists.']);
+        }
+
+        $data['phone']      = $phone;
+        $data['company_id'] = auth()->user()->company_id;
 
         $customer = Customer::create($data);
         AuditService::log('customer.created', $customer, [], $data);
@@ -96,13 +118,20 @@ class CustomerController extends Controller
 
         $data = $request->validate([
             'name'        => 'required|string|max:191',
-            'phone'       => "required|string|max:20|unique:customers,phone,{$customer->id}",
+            'phone'       => "required|string|max:20",
             'email'       => 'nullable|email|max:191',
             'company'     => 'nullable|string|max:191',
             'notes'       => 'nullable|string',
             'assigned_to' => 'nullable|exists:users,id',
             'status'      => 'in:active,inactive,blocked',
         ]);
+
+        $phone = preg_replace('/\D/', '', $data['phone']);
+        $duplicate = Customer::where('phone', $phone)->where('id', '!=', $customer->id)->exists();
+        if ($duplicate) {
+            return back()->withErrors(['phone' => 'This phone number already exists.']);
+        }
+        $data['phone'] = $phone;
 
         $old = $customer->only(array_keys($data));
         $customer->update($data);

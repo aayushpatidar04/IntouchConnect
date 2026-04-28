@@ -4,13 +4,13 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class AuditLog extends Model
 {
     public $timestamps = false;
 
     protected $fillable = [
+        'company_id',
         'user_id',
         'action',
         'auditable_type',
@@ -35,16 +35,20 @@ class AuditLog extends Model
     {
         static::creating(function ($model) {
             $model->created_at = now();
+            // Auto-fill company_id when there is an auth context
+            if (empty($model->company_id) && auth()->check()) {
+                $model->company_id = auth()->user()->company_id;
+            }
         });
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
-    }
-
-    public function auditable(): MorphTo
-    {
-        return $this->morphTo();
     }
 }

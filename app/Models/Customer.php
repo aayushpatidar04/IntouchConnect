@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Scopes\CompanyScope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,18 +14,8 @@ class Customer extends Model
 {
     use HasFactory, SoftDeletes;
 
-    protected static function booted(): void
-    {
-        static::addGlobalScope(new \App\Scopes\CompanyScope());
-
-        static::creating(function ($customer) {
-            if (auth()->check() && !$customer->company_id) {
-                $customer->company_id = auth()->user()->company_id;
-            }
-        });
-    }
-
     protected $fillable = [
+        'company_id',
         'assigned_to',
         'name',
         'phone',
@@ -34,15 +25,34 @@ class Customer extends Model
         'status',
         'tags',
         'last_contacted_at',
-        'company_id',
     ];
 
     protected function casts(): array
     {
         return [
-            'tags' => 'array',
+            'tags'              => 'array',
             'last_contacted_at' => 'datetime',
         ];
+    }
+
+    // ── Global Scope: automatically filter by the authenticated user's company ─
+    protected static function booted(): void
+    {
+        static::addGlobalScope(new CompanyScope());
+
+        // Auto-fill company_id when creating
+        static::creating(function ($customer) {
+            if (empty($customer->company_id) && auth()->check() && auth()->user()->company_id) {
+                $customer->company_id = auth()->user()->company_id;
+            }
+        });
+    }
+
+    // ── Relationships ─────────────────────────────────────────────────────────
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     public function assignedTo(): BelongsTo
@@ -55,6 +65,10 @@ class Customer extends Model
         return $this->hasMany(Message::class)->orderBy('created_at');
     }
 
+    /**
+     * Fixed: was HasMany with limit(1) which breaks eager loading on lists.
+     * HasOne with latestOfMany() works correctly with with('latestMessage').
+     */
     public function latestMessage(): HasOne
     {
         return $this->hasOne(Message::class)->latestOfMany();
@@ -64,6 +78,8 @@ class Customer extends Model
     {
         return $this->hasMany(Document::class);
     }
+
+    // ── Accessors ─────────────────────────────────────────────────────────────
 
     public function getUnreadCountAttribute(): int
     {
@@ -76,10 +92,5 @@ class Customer extends Model
     public function getFormattedPhoneAttribute(): string
     {
         return '+' . ltrim($this->phone, '+');
-    }
-
-    public function company(): BelongsTo
-    {
-        return $this->belongsTo(Company::class);
     }
 }

@@ -7,7 +7,6 @@ use App\Models\Message;
 use App\Services\AuditService;
 use App\Services\GatewayService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 
 class MessageController extends Controller
@@ -21,16 +20,20 @@ class MessageController extends Controller
         $data = $request->validate([
             'body' => 'required|string|max:4096',
         ]);
-        
-        // Check gateway is live
-        $status = $this->gateway->getStatus();
-        
+
+        // Set company context so GatewayService uses the right sessionId
+        $this->gateway->forAuthUser();
+
+        // Check this company's gateway session is live
+        $status = $this->gateway->getCompanyStatus();
+
         if (empty($status['is_ready'])) {
-            return response()->json(['error' => 'WhatsApp is not connected.'], 503);
+            return response()->json(['error' => 'WhatsApp is not connected for your company.'], 503);
         }
 
-        // Create message record (pending)
         $message = Message::create([
+            'company_id'  => auth()->user()->company_id,
+            'session_id'  => auth()->user()->company?->session_id,
             'customer_id' => $customer->id,
             'sent_by'     => auth()->id(),
             'direction'   => 'outbound',
@@ -40,11 +43,10 @@ class MessageController extends Controller
         ]);
 
         try {
-            $gateway = new GatewayService(auth()->user()->company);
-            $result = $gateway->sendMessage($customer->phone, $data['body']);
+            $result = $this->gateway->sendMessage($customer->phone, $data['body']);
             $message->update([
-                'status'          => 'queued',
-                'gateway_job_id'  => $result['job_id'] ?? null,
+                'status'         => 'queued',
+                'gateway_job_id' => $result['job_id'] ?? null,
             ]);
         } catch (\Throwable $e) {
             $message->update(['status' => 'failed', 'failure_reason' => $e->getMessage()]);

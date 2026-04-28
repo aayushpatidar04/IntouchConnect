@@ -1,13 +1,15 @@
 <?php
+// routes/api.php
 
 use App\Http\Controllers\GatewayController;
 use Illuminate\Support\Facades\Route;
 
-// Gateway webhook — no CSRF, authenticated by secret header only
-// Old single-tenant webhook (keep for backwards compat)
+/**
+ * Gateway webhook — unauthenticated by Laravel, authenticated by X-Gateway-Secret header.
+ * Company/session is identified by session_id in the request body payload.
+ * API routes in Laravel 11 are already CSRF-exempt.
+ */
 Route::post('/gateway/webhook', [GatewayController::class, 'webhook'])
     ->name('gateway.webhook');
 
-// New per-company webhook — each Gateway's CRM_URL points to /api/gateway/{company_id}/webhook
-Route::post('/gateway/{company}/webhook', [GatewayController::class, 'companyWebhook'])
-    ->name('gateway.company.webhook');
+Route::post('/gateway/upload-media', [GatewayController::class, 'uploadMedia']);

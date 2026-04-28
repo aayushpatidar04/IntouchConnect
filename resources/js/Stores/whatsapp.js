@@ -30,6 +30,20 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         } catch {}
     }
 
+    async function createSession() {
+        loading.value = true;
+        try {
+            await axios.post(route('gateway.session.create'));
+            // Fetch updated status after a short delay to let gateway spin up
+            await new Promise(r => setTimeout(r, 1500));
+            await fetchStatus();
+        } catch (e) {
+            console.error('createSession failed:', e);
+        } finally {
+            loading.value = false;
+        }
+    }
+
     async function logout() {
         loading.value = true;
         try {
@@ -51,5 +65,5 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         if (payload.status === 'connected') phone.value = payload.phone ?? null;
     }
 
-    return { status, qrCode, phone, isReady, loading, queueStats, fetchStatus, fetchQueueStats, logout, handleStatusEvent };
+    return { status, qrCode, phone, isReady, loading, queueStats, fetchStatus, fetchQueueStats, createSession, logout, handleStatusEvent };
 });
