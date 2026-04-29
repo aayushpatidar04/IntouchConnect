@@ -16,8 +16,9 @@ class DocumentController extends Controller
 {
     public function __construct(
         private DocumentService $docService,
-        private GatewayService  $gateway,
-    ) {}
+        private GatewayService $gateway,
+    ) {
+    }
 
     public function upload(Request $request, Customer $customer): JsonResponse
     {
@@ -29,13 +30,13 @@ class DocumentController extends Controller
 
         $document = $this->docService->saveManualUpload(
             customer: $customer,
-            file:     $request->file('file'),
-            userId:   auth()->id()
+            file: $request->file('file'),
+            userId: auth()->id()
         );
 
         AuditService::log('document.uploaded', $document, [], [
             'customer_id' => $customer->id,
-            'filename'    => $document->original_filename,
+            'filename' => $document->original_filename,
         ]);
 
         return response()->json([
@@ -63,35 +64,35 @@ class DocumentController extends Controller
         }
 
         $message = Message::create([
-            'company_id'  => auth()->user()->company_id,
-            'session_id'  => auth()->user()->company?->session_id,
+            'company_id' => auth()->user()->company_id,
+            'session_id' => auth()->user()->company?->session_id,
             'customer_id' => $customer->id,
-            'sent_by'     => auth()->id(),
-            'direction'   => 'outbound',
-            'type'        => $this->typeFromMime($document->mime_type),
-            'body'        => $data['caption'] ?? '',
-            'status'      => 'pending',
+            'sent_by' => auth()->id(),
+            'direction' => 'outbound',
+            'type' => $this->typeFromMime($document->mime_type),
+            'body' => $data['caption'] ?? '',
+            'status' => 'pending',
         ]);
 
         $document->update(['message_id' => $message->id]);
 
         try {
             $decrypted = $this->docService->getDecryptedContent($document);
-            $safeName  = preg_replace('/[^a-zA-Z0-9._-]/', '_', $document->original_filename);
-            $tmpPath   = sys_get_temp_dir() . '/' . $safeName;
+            $safeName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $document->original_filename);
+            $tmpPath = sys_get_temp_dir() . '/' . $safeName;
             file_put_contents($tmpPath, $decrypted);
 
             $result = $this->gateway->sendMedia(
-                to:               $customer->phone,
-                filePath:         $tmpPath,
-                caption:          $data['caption'] ?? '',
+                to: $customer->phone,
+                filePath: $tmpPath,
+                caption: $data['caption'] ?? '',
                 originalFilename: $document->original_filename,
-                mimeType:         $document->mime_type,
-                id:                $message->id,
+                mimeType: $document->mime_type,
+                messageId: $message->id,
             );
 
             $message->update([
-                'status'         => 'queued',
+                'status' => 'queued',
                 'gateway_job_id' => $result['job_id'] ?? null,
             ]);
 
@@ -109,11 +110,11 @@ class DocumentController extends Controller
         $customer->update(['last_contacted_at' => now()]);
         AuditService::log('document.sent', $document, [], [
             'customer_id' => $customer->id,
-            'message_id'  => $message->id,
+            'message_id' => $message->id,
         ]);
 
         return response()->json([
-            'message'  => $message->load('sentBy'),
+            'message' => $message->load('sentBy'),
             'document' => $document->fresh(),
         ]);
     }
@@ -123,28 +124,28 @@ class DocumentController extends Controller
         $this->authorize('view', $document->customer);
 
         AuditService::log('document.downloaded', $document);
-        $content  = $this->docService->getDecryptedContent($document);
+        $content = $this->docService->getDecryptedContent($document);
         $filename = $document->original_filename;
-        $ext      = pathinfo($filename, PATHINFO_EXTENSION);
+        $ext = pathinfo($filename, PATHINFO_EXTENSION);
 
         if (empty($ext)) {
             $mimeMap = [
-                'application/pdf'      => 'pdf',
-                'application/msword'   => 'doc',
+                'application/pdf' => 'pdf',
+                'application/msword' => 'doc',
                 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
                 'application/vnd.ms-excel' => 'xls',
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
-                'text/plain'           => 'txt',
-                'text/csv'             => 'csv',
-                'image/jpeg'           => 'jpg',
-                'image/png'            => 'png',
-                'image/gif'            => 'gif',
-                'image/webp'           => 'webp',
-                'audio/mpeg'           => 'mp3',
-                'audio/ogg'            => 'ogg',
-                'audio/wav'            => 'wav',
-                'video/mp4'            => 'mp4',
-                'video/3gpp'           => '3gp',
+                'text/plain' => 'txt',
+                'text/csv' => 'csv',
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/gif' => 'gif',
+                'image/webp' => 'webp',
+                'audio/mpeg' => 'mp3',
+                'audio/ogg' => 'ogg',
+                'audio/wav' => 'wav',
+                'video/mp4' => 'mp4',
+                'video/3gpp' => '3gp',
             ];
             if ($guessed = $mimeMap[$document->mime_type] ?? null) {
                 $filename .= '.' . $guessed;
@@ -152,9 +153,9 @@ class DocumentController extends Controller
         }
 
         return response($content, 200, [
-            'Content-Type'        => $document->mime_type,
+            'Content-Type' => $document->mime_type,
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            'Content-Length'      => strlen($content),
+            'Content-Length' => strlen($content),
         ]);
     }
 
@@ -164,7 +165,7 @@ class DocumentController extends Controller
 
         $data = $request->validate([
             'status' => 'required|in:pending,approved,rejected',
-            'notes'  => 'nullable|string',
+            'notes' => 'nullable|string',
         ]);
 
         $old = $document->only(['status', 'notes']);
@@ -189,7 +190,7 @@ class DocumentController extends Controller
             str_contains($mime, 'image') => 'image',
             str_contains($mime, 'video') => 'video',
             str_contains($mime, 'audio') => 'audio',
-            default                      => 'document',
+            default => 'document',
         };
     }
 }
