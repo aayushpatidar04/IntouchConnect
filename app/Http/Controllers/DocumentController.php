@@ -87,6 +87,7 @@ class DocumentController extends Controller
                 caption:          $data['caption'] ?? '',
                 originalFilename: $document->original_filename,
                 mimeType:         $document->mime_type,
+                id:                $message->id,
             );
 
             $message->update([

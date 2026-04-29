@@ -255,7 +255,7 @@ useChannel(`user.${page.props.auth.user.id}`, {
 useChannel('messages', {
     'message.status': (data) => {
         const msg = messages.value.find(
-            m => m.gateway_job_id === data.job_id || m.id === data.id
+            m => m.id === data.message_id || m.id === data.id
         );
         if (msg) msg.status = data.status;
     },

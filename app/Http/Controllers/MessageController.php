@@ -43,7 +43,7 @@ class MessageController extends Controller
         ]);
 
         try {
-            $result = $this->gateway->sendMessage($customer->phone, $data['body']);
+            $result = $this->gateway->sendMessage($customer->phone, $data['body'], $message->id);
             $message->update([
                 'status'         => 'queued',
                 'gateway_job_id' => $result['job_id'] ?? null,

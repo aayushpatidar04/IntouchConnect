@@ -87,7 +87,7 @@ class GatewayService
         return $all ?: ['status' => 'disconnected', 'is_ready' => false];
     }
 
-    public function sendMessage(string $to, string $message, int $priority = 0): array
+    public function sendMessage(string $to, string $message, ?int $messageId = null, int $priority = 0): array
     {
         if (!$this->company) {
             throw new \RuntimeException('No company context set on GatewayService.');
@@ -99,6 +99,7 @@ class GatewayService
                 'sessionId' => $this->company->session_id,
                 'to' => $to,
                 'message' => $message,
+                'message_id' => $messageId,
                 'priority' => $priority,
             ]);
 
@@ -114,7 +115,8 @@ class GatewayService
         string $filePath,
         string $caption = '',
         string $originalFilename = '',
-        string $mimeType = ''
+        string $mimeType = '',
+        ?int $messageId = null
     ): array {
         if (!$this->company) {
             throw new \RuntimeException('No company context set on GatewayService.');
@@ -134,6 +136,7 @@ class GatewayService
                 'caption' => $caption,
                 'original_filename' => $filename,
                 'mime_type' => $mimeType,
+                'message_id' => $messageId,
             ]);
 
         if (!$response->successful()) {
@@ -390,14 +393,18 @@ class GatewayService
 
     private function handleMessageSent(array $data): void
     {
-        Message::withoutGlobalScopes()
-            ->where('gateway_job_id', $data['job_id'])
-            ->update(['status' => 'sent']);
+        $messageId = $data['message_id'] ?? null;
+
+        if ($messageId) {
+            Message::withoutGlobalScopes()
+                ->where('id', $messageId)
+                ->update(['status' => 'sent']);
+        }
 
         try {
             broadcast(new \App\Events\MessageStatusUpdated([
-                'job_id' => $data['job_id'],
-                'status' => 'sent',
+                'message_id' => $messageId,
+                'status'     => 'sent',
             ]));
         } catch (\Throwable $e) {
             Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
@@ -406,12 +413,23 @@ class GatewayService
 
     private function handleMessageFailed(array $data): void
     {
-        Message::withoutGlobalScopes()
-            ->where('gateway_job_id', $data['job_id'])
-            ->update(['status' => 'failed', 'failure_reason' => $data['error'] ?? 'Unknown']);
+        $messageId = $data['message_id'] ?? null;
+ 
+        if ($messageId) {
+            Message::withoutGlobalScopes()
+                ->where('id', $messageId)
+                ->update([
+                    'status'         => 'failed',
+                    'failure_reason' => $data['error'] ?? 'Unknown',
+                ]);
+        }
 
         try {
-            broadcast(new \App\Events\MessageStatusUpdated($data));
+            broadcast(new \App\Events\MessageStatusUpdated([
+                'message_id' => $messageId,
+                'status'     => 'failed',
+                'error'      => $data['error'] ?? null,
+            ]));
         } catch (\Throwable $e) {
             Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
         }
@@ -460,7 +478,7 @@ class GatewayService
         ]);
 
         try {
-            broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null, $sessionId  ));
+            broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null, $sessionId));
         } catch (\Throwable $e) {
             Log::warning('WhatsAppStatusChanged broadcast failed: ' . $e->getMessage());
         }
