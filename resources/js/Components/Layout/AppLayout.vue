@@ -154,7 +154,8 @@ if (userRoles.value.includes('executive')) {
     });
 }
 
-useChannel('whatsapp-status', {
+const waSessionId = page.props.whatsapp_session_id ?? 'default';
+useChannel(`whatsapp-status.${waSessionId}`, {
     'status.changed': (data) => wa.handleStatusEvent(data),
 });
 

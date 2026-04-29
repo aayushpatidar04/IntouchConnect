@@ -460,7 +460,7 @@ class GatewayService
         ]);
 
         try {
-            broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null));
+            broadcast(new \App\Events\WhatsAppStatusChanged('qr_ready', $payload['qr'] ?? null, $sessionId  ));
         } catch (\Throwable $e) {
             Log::warning('WhatsAppStatusChanged broadcast failed: ' . $e->getMessage());
         }
@@ -481,7 +481,7 @@ class GatewayService
         ]);
 
         try {
-            broadcast(new \App\Events\WhatsAppStatusChanged('connected'));
+            broadcast(new \App\Events\WhatsAppStatusChanged('connected', null, $sessionId, $payload['phone'] ?? null));
         } catch (\Throwable $e) {
             Log::warning('WhatsAppStatusChanged broadcast failed: ' . $e->getMessage());
         }
@@ -500,7 +500,7 @@ class GatewayService
         ]);
 
         try {
-            broadcast(new \App\Events\WhatsAppStatusChanged('disconnected'));
+            broadcast(new \App\Events\WhatsAppStatusChanged('disconnected', null, $sessionId));
         } catch (\Throwable $e) {
             Log::warning('WhatsAppStatusChanged broadcast failed: ' . $e->getMessage());
         }
@@ -516,7 +516,7 @@ class GatewayService
         ]);
 
         try {
-            broadcast(new \App\Events\WhatsAppStatusChanged('failed'));
+            broadcast(new \App\Events\WhatsAppStatusChanged('failed', null, $sessionId));
         } catch (\Throwable $e) {
             Log::warning('WhatsAppStatusChanged broadcast failed: ' . $e->getMessage());
         }

@@ -14,12 +14,19 @@ class WhatsAppStatusChanged implements ShouldBroadcastNow
 
     public function __construct(
         public string $status,
-        public ?string $qrCode = null
-    ) {}
+        public ?string $qrCode = null,
+        public ?string $sessionId = null,   // CHANGED: added session_id
+        public ?string $phone = null,   // CHANGED: added phone for 'connected' event
+    ) {
+    }
 
     public function broadcastOn(): array
     {
-        return [new Channel('whatsapp-status')];
+        // CHANGED: Use session-scoped channel so only the right company receives it.
+        // Falls back to 'whatsapp-status.default' if no session_id provided.
+        $sessionId = $this->sessionId ?? config('whatsapp.session_id', 'default');
+
+        return [new Channel("whatsapp-status.{$sessionId}")];
     }
 
     public function broadcastAs(): string
@@ -31,7 +38,9 @@ class WhatsAppStatusChanged implements ShouldBroadcastNow
     {
         return [
             'status' => $this->status,
-            'qr'     => $this->qrCode,
+            'qr' => $this->qrCode,
+            'session_id' => $this->sessionId ?? config('whatsapp.session_id', 'default'),
+            'phone' => $this->phone,
         ];
     }
 }

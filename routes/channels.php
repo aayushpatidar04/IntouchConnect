@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Broadcast;
 
 // ── Public channels (no auth — gateway events + chat updates) ────────────────
 Broadcast::channel('messages',         fn() => true);
-Broadcast::channel('whatsapp-status',  fn() => true);
+Broadcast::channel('whatsapp-status.{sessionId}', fn() => true);
 
 // ── Notification channels ─────────────────────────────────────────────────────
 // Admin sees ALL inbound notifications

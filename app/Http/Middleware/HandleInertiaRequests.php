@@ -36,6 +36,7 @@ class HandleInertiaRequests extends Middleware
                     'is_admin'       => $user->isCompanyAdmin(),
                 ] : null,
             ],
+            'whatsapp_session_id' => $user->company?->slug,
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error'   => fn () => $request->session()->get('error'),
