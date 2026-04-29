@@ -331,4 +331,5 @@ class CompanyController extends Controller
 
         return back()->with('success', "Company \"{$company->name}\" {$status}.");
     }
+    
 }
