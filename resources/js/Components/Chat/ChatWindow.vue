@@ -213,8 +213,8 @@ const avatarUrl = computed(() =>
 
 // Local helper function
 function avatarUrlFromName(name) {
-  const safeName = name || 'User';
-  return `https://ui-avatars.com/api/?name=${encodeURIComponent(safeName)}&background=e2e8f0&color=475569&size=64`;
+    const safeName = name || 'User';
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(safeName)}&background=e2e8f0&color=475569&size=64`;
 }
 
 // Send is allowed when:
@@ -254,12 +254,34 @@ useChannel(`user.${page.props.auth.user.id}`, {
 
 useChannel('messages', {
     'message.status': (data) => {
+        console.log('Incoming status event:', data);
+
+        // Log every message object so you can compare IDs
+        messages.value.forEach(m => {
+            console.log('Message in array:', {
+                id: m.id,
+                message_id: m.message_id,
+                body: m.body,
+                document: m.document,
+                status: m.status,
+                direction: m.direction,
+            });
+        });
+
         const msg = messages.value.find(
-            m => m.id === data.message_id || m.id === data.id
+            m => String(m.id) === String(data.message_id) || String(m.id) === String(data.id)
         );
-        if (msg) msg.status = data.status;
+
+
+        if (msg) {
+            console.log('Matched message:', msg);
+            msg.status = data.status;
+        } else {
+            console.warn('No match found for status update');
+        }
     },
 });
+
 
 // ── File staging ─────────────────────────────────────────────────────────────
 async function handleFileSelect(e) {
@@ -267,9 +289,9 @@ async function handleFileSelect(e) {
     if (!file) return;
     e.target.value = ''; // reset input so same file can be re-selected
 
-    // Validate size (20 MB)
-    if (file.size > 20 * 1024 * 1024) {
-        toastError('File too large. Maximum size is 20 MB.');
+    // Validate size (10 MB)
+    if (file.size > 10 * 1024 * 1024) {
+        toastError('File too large. Maximum size is 10 MB.');
         return;
     }
 
