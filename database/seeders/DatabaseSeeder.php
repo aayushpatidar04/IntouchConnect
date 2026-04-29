@@ -14,16 +14,12 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         // ── Roles ─────────────────────────────────────────────────────────────
-        // super_admin — owns the SaaS platform, manages all companies
-        // admin       — company-level admin, manages their own company's users
-        // executive   — handles customer conversations
-        // auditor     — read-only access to their company's data
         Role::firstOrCreate(['name' => 'super_admin']);
         Role::firstOrCreate(['name' => 'admin']);
         Role::firstOrCreate(['name' => 'executive']);
         Role::firstOrCreate(['name' => 'auditor']);
 
-        // ── Super Admin (no company) ──────────────────────────────────────────
+        // ── Super Admin (no company_id — platform owner) ──────────────────────
         $superAdmin = User::firstOrCreate(
             ['email' => 'superadmin@intouchconnect.com'],
             [
@@ -42,18 +38,19 @@ class DatabaseSeeder extends Seeder
         );
 
         $admin1 = User::firstOrCreate(
-            ['email' => 'admin@acme.test'],
+            ['email' => 'admin@crm.test'],
             [
                 'company_id' => $company1->id,
-                'name'       => 'Acme Admin',
+                'name'       => 'Admin User',
                 'password'   => Hash::make('password'),
                 'is_active'  => true,
             ]
         );
+        if (! $admin1->company_id) $admin1->update(['company_id' => $company1->id]);
         $admin1->syncRoles(['admin']);
 
         $exec1 = User::firstOrCreate(
-            ['email' => 'sarah@acme.test'],
+            ['email' => 'sarah@crm.test'],
             [
                 'company_id' => $company1->id,
                 'name'       => 'Sarah Johnson',
@@ -61,6 +58,7 @@ class DatabaseSeeder extends Seeder
                 'is_active'  => true,
             ]
         );
+        if (! $exec1->company_id) $exec1->update(['company_id' => $company1->id]);
         $exec1->syncRoles(['executive']);
 
         // ── Demo Company 2: Beta Ltd ──────────────────────────────────────────
@@ -69,19 +67,8 @@ class DatabaseSeeder extends Seeder
             ['name' => 'Beta Ltd', 'is_active' => true]
         );
 
-        $admin2 = User::firstOrCreate(
-            ['email' => 'admin@beta.test'],
-            [
-                'company_id' => $company2->id,
-                'name'       => 'Beta Admin',
-                'password'   => Hash::make('password'),
-                'is_active'  => true,
-            ]
-        );
-        $admin2->syncRoles(['admin']);
-
         $exec2 = User::firstOrCreate(
-            ['email' => 'raj@beta.test'],
+            ['email' => 'raj@crm.test'],
             [
                 'company_id' => $company2->id,
                 'name'       => 'Raj Patel',
@@ -89,27 +76,28 @@ class DatabaseSeeder extends Seeder
                 'is_active'  => true,
             ]
         );
+        if (! $exec2->company_id) $exec2->update(['company_id' => $company2->id]);
         $exec2->syncRoles(['executive']);
 
         // ── Sample customers ──────────────────────────────────────────────────
-        Customer::factory()->count(5)->create([
-            'company_id'  => $company1->id,
-            'assigned_to' => $exec1->id,
-        ]);
-        Customer::factory()->count(5)->create([
-            'company_id'  => $company2->id,
-            'assigned_to' => $exec2->id,
-        ]);
+        if (Customer::count() === 0) {
+            Customer::factory()->count(5)->create([
+                'company_id'  => $company1->id,
+                'assigned_to' => $exec1->id,
+            ]);
+            Customer::factory()->count(5)->create([
+                'company_id'  => $company2->id,
+                'assigned_to' => $exec2->id,
+            ]);
+        }
 
         $this->command->info('');
         $this->command->info('=== Seed complete ===');
-        $this->command->info('Super Admin  : superadmin@intouchconnect.com / SuperAdmin@123!');
-        $this->command->info('Acme Admin   : admin@acme.test / password');
-        $this->command->info('Acme Exec    : sarah@acme.test / password');
-        $this->command->info('Beta Admin   : admin@beta.test / password');
-        $this->command->info('Beta Exec    : raj@beta.test   / password');
+        $this->command->info('Super Admin  : superadmin@intouchconnect.com  /  SuperAdmin@123!');
+        $this->command->info('Admin (Acme) : admin@crm.test                 /  password');
+        $this->command->info('Exec  (Acme) : sarah@crm.test                 /  password');
+        $this->command->info('Exec  (Beta) : raj@crm.test                   /  password');
         $this->command->info('');
-        $this->command->info('Gateway session IDs: "acme-corp", "beta-ltd"');
-        $this->command->info('Make sure these exist in gateway auth_info/ folder (or POST /session/create)');
+        $this->command->info('Run: php artisan db:seed (safe to re-run — uses firstOrCreate)');
     }
 }

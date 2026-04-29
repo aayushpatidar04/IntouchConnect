@@ -15,15 +15,20 @@
                             d="M12 0C5.373 0 0 5.373 0 12c0 2.126.557 4.123 1.527 5.855L0 24l6.335-1.51A11.94 11.94 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.81 9.81 0 01-5.002-1.37l-.358-.214-3.724.978.992-3.63-.236-.374A9.818 9.818 0 012.182 12C2.182 6.57 6.57 2.182 12 2.182S21.818 6.57 21.818 12 17.43 21.818 12 21.818z" />
                     </svg>
                 </div>
-                <span v-if="sidebarOpen" class="font-semibold text-sm tracking-wide whitespace-nowrap">WhatsApp
-                    CRM</span>
+                <span v-if="sidebarOpen" class="font-semibold text-sm tracking-wide whitespace-nowrap">
+                    WhatsApp CRM
+                </span>
             </div>
 
-            <!-- Nav -->
+            <!-- Nav — company users only (admin, executive, auditor) -->
             <nav class="flex-1 py-4 space-y-1 px-2 overflow-y-auto scrollbar-thin">
                 <NavItem :href="route('dashboard')" :icon="HomeIcon" label="Dashboard" :open="sidebarOpen" />
+
+                <!-- Customers — admin, executive, auditor all see this -->
                 <NavItem :href="route('customers.index')" :icon="UsersIcon" label="Customers" :open="sidebarOpen" />
-                <template v-if="$page.props.auth.user.roles?.includes('admin')">
+
+                <!-- Admin section — only company admin sees this -->
+                <template v-if="isAdmin">
                     <div class="pt-2 pb-1 px-2">
                         <span v-if="sidebarOpen"
                             class="text-xs uppercase tracking-widest text-surface-500 font-medium">Admin</span>
@@ -35,7 +40,7 @@
                 </template>
             </nav>
 
-            <!-- WhatsApp status pill -->
+            <!-- WhatsApp status pill (company-scoped) -->
             <div class="px-3 py-3 border-t border-surface-800">
                 <div :class="['flex items-center gap-2 rounded-xl px-3 py-2', statusBg]">
                     <span :class="statusDot" />
@@ -43,9 +48,10 @@
                 </div>
             </div>
 
-            <!-- User + collapse -->
+            <!-- User info + collapse toggle -->
             <div class="p-3 border-t border-surface-800 flex items-center gap-2">
-                <img :src="$page.props.auth.user.avatar_url" class="w-8 h-8 rounded-full shrink-0 object-cover" />
+                <img :src="$page.props.auth.user.avatar_url"
+                    class="w-8 h-8 rounded-full shrink-0 object-cover" />
                 <div v-if="sidebarOpen" class="min-w-0 flex-1">
                     <p class="text-xs font-medium truncate">{{ $page.props.auth.user.name }}</p>
                     <p class="text-xs text-surface-400 truncate">{{ roleLabel }}</p>
@@ -58,7 +64,7 @@
             </div>
         </aside>
 
-        <!-- Main content -->
+        <!-- Main -->
         <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
             <!-- Top bar -->
             <header class="h-14 bg-white border-b border-surface-100 flex items-center px-6 gap-4 shrink-0">
@@ -69,9 +75,7 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <slot name="actions" />
-                    <!-- CHANGED: Notification bell -->
                     <NotificationBell />
-                    <!-- Logout -->
                     <Link :href="route('logout')" method="post" as="button"
                         class="text-xs text-surface-400 hover:text-surface-700 transition-colors px-2 py-1 rounded-lg hover:bg-surface-100">
                         Sign out
@@ -85,24 +89,20 @@
             </main>
         </div>
 
-        <!-- Toast container -->
         <ToastStack />
     </div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue';
-import { Link, usePage } from '@inertiajs/vue3';
-// CHANGED: Added notification store and bell component imports
+import { Link, router, usePage } from '@inertiajs/vue3';
 import { useWhatsAppStore } from '@/Stores/whatsapp';
 import { useChannel } from '@/Composables/useEcho';
 import { useNotificationStore } from '@/Stores/notifications';
-import NotificationBell from '@/Components/UI/NotificationBell.vue';
 import { useToast } from '@/Composables/useToast';
 import NavItem from '@/Components/Layout/NavItem.vue';
+import NotificationBell from '@/Components/UI/NotificationBell.vue';
 import ToastStack from '@/Components/UI/ToastStack.vue';
-
-// Icons (heroicons inline SVG via components)
 import HomeIcon from '@/Components/Icons/HomeIcon.vue';
 import UsersIcon from '@/Components/Icons/UsersIcon.vue';
 import ShieldIcon from '@/Components/Icons/ShieldIcon.vue';
@@ -113,38 +113,40 @@ import ChevronRightIcon from '@/Components/Icons/ChevronRightIcon.vue';
 defineProps({ title: String });
 
 const sidebarOpen = ref(true);
-const page = usePage();
-const wa      = useWhatsAppStore();
-const notifStore = useNotificationStore();
-const { info }   = useToast();
+const page        = usePage();
+const wa          = useWhatsAppStore();
+const notifStore  = useNotificationStore();
+const { info }    = useToast();
+
+const userRoles = computed(() => page.props.auth.user.roles ?? []);
+const userId    = computed(() => page.props.auth.user.id);
+
+// If somehow a super_admin lands on this layout, redirect them to their panel
+const isSuperAdmin = computed(() => userRoles.value.includes('super_admin'));
+const isAdmin      = computed(() => userRoles.value.includes('admin'));
+
+if (isSuperAdmin.value) {
+    router.visit(route('dashboard'));
+}
 
 onMounted(() => {
+    // Only fetch WA status for company users — super admin never reaches here
     wa.fetchStatus();
-    setInterval(wa.fetchStatus, 30000);
+    setInterval(wa.fetchStatus, 30_000);
 });
 
-// ── CHANGED: Listen for inbound message notifications ─────────────────────────
-// Admin hears everything on admin-notifications channel
-// Executive hears their own notifications on executive-notifications.{id} channel
-const userRoles = page.props.auth.user.roles ?? [];
-const userId    = page.props.auth.user.id;
-
-// Admin/auditor: subscribe to admin-notifications
-if (userRoles.includes('admin') || userRoles.includes('auditor')) {
+// ── Real-time channels (company users only) ───────────────────────────────────
+if (isAdmin.value || userRoles.value.includes('auditor')) {
     useChannel('admin-notifications', {
         'new.message': (data) => {
             notifStore.add(data);
-            // Show toast for unassigned messages (needs attention)
-            if (data.is_unassigned) {
-                info(`📲 New message from unassigned customer: ${data.customer_name}`);
-            }
+            if (data.is_unassigned) info(`📲 New message from unassigned: ${data.customer_name}`);
         },
     });
 }
 
-// Executive: subscribe to their own channel
-if (userRoles.includes('executive')) {
-    useChannel(`executive-notifications.${userId}`, {
+if (userRoles.value.includes('executive')) {
+    useChannel(`executive-notifications.${userId.value}`, {
         'new.message': (data) => {
             notifStore.add(data);
             info(`💬 New message from ${data.customer_name}`);
@@ -152,34 +154,34 @@ if (userRoles.includes('executive')) {
     });
 }
 
-// Listen for real-time WhatsApp status changes
 useChannel('whatsapp-status', {
     'status.changed': (data) => wa.handleStatusEvent(data),
 });
 
+// ── WA status display (sidebar pill) ─────────────────────────────────────────
 const statusBg = computed(() => ({
-    'connected': 'bg-brand-500/10 text-brand-400',
-    'qr_ready': 'bg-amber-500/10 text-amber-400',
-    'disconnected': 'bg-surface-700 text-surface-400',
-    'unreachable': 'bg-red-500/10 text-red-400',
+    connected:    'bg-brand-500/10 text-brand-400',
+    qr_ready:     'bg-amber-500/10 text-amber-400',
+    disconnected: 'bg-surface-700 text-surface-400',
+    unreachable:  'bg-red-500/10 text-red-400',
 }[wa.status] ?? 'bg-surface-700 text-surface-400'));
 
 const statusDot = computed(() => ({
-    'connected': 'dot-connected',
-    'qr_ready': 'dot-qr',
-    'disconnected': 'dot-disconnected',
-    'unreachable': 'dot-disconnected',
+    connected:    'dot-connected',
+    qr_ready:     'dot-qr',
+    disconnected: 'dot-disconnected',
+    unreachable:  'dot-disconnected',
 }[wa.status] ?? 'dot-disconnected'));
 
 const statusLabel = computed(() => ({
-    'connected': `WA: ${wa.phone ?? 'Connected'}`,
-    'qr_ready': 'Scan QR Code',
-    'disconnected': 'WA: Disconnected',
-    'unreachable': 'Gateway Offline',
+    connected:    `WA: ${wa.phone ?? 'Connected'}`,
+    qr_ready:     'Scan QR Code',
+    disconnected: 'WA: Disconnected',
+    unreachable:  'Gateway Offline',
 }[wa.status] ?? 'Unknown'));
 
 const roleLabel = computed(() => {
-    const roles = page.props.auth.user.roles ?? [];
-    return roles[0] ? roles[0].charAt(0).toUpperCase() + roles[0].slice(1) : '';
+    const r = userRoles.value[0] ?? '';
+    return r ? r.charAt(0).toUpperCase() + r.slice(1) : '';
 });
 </script>

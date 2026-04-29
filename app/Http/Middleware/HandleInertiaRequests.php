@@ -21,16 +21,25 @@ class HandleInertiaRequests extends Middleware
         return array_merge(parent::share($request), [
             'auth' => [
                 'user' => $user ? [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'avatar_url' => $user->avatar_url,
-                    'roles' => $user->getRoleNames()->toArray(),
+                    'id'             => $user->id,
+                    'name'           => $user->name,
+                    'email'          => $user->email,
+                    'phone'          => $user->phone,
+                    'avatar_url'     => $user->avatar_url,
+                    'company_id'     => $user->company_id,
+                    'company_name'   => $user->company?->name,
+                    // Flat role array — used in Vue as:
+                    // $page.props.auth.user.roles.includes('admin')
+                    'roles'          => $user->getRoleNames()->toArray(),
+                    // Convenience booleans — avoids repeating includes() checks in templates
+                    'is_super_admin' => $user->isSuperAdmin(),
+                    'is_admin'       => $user->isCompanyAdmin(),
                 ] : null,
             ],
             'flash' => [
-                'success' => fn() => $request->session()->get('success'),
-                'error' => fn() => $request->session()->get('error'),
+                'success' => fn () => $request->session()->get('success'),
+                'error'   => fn () => $request->session()->get('error'),
+                'warning' => fn () => $request->session()->get('warning'),
             ],
         ]);
     }

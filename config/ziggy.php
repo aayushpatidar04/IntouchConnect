@@ -11,6 +11,7 @@ return [
         'messages.*',
         'documents.*',
         'gateway.*',
+        'superadmin.*',
         'admin.*',
         'login',
         'logout',
