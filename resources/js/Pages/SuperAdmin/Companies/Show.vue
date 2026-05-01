@@ -361,7 +361,7 @@ function submitEditCompany() {
 
 function toggleActive() {
     router.post(route('superadmin.companies.toggle', props.company.id), {}, {
-        onSuccess: () => toast.success(`Company ${props.company.is_active ? 'deactivated' : 'activated'}.`),
+        onSuccess: () => toast.success(`Company ${props.company.is_active ? 'activated' : 'deactivated'}.`),
     });
 }
 

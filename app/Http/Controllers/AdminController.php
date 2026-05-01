@@ -47,7 +47,7 @@ class AdminController extends Controller
 
         return Inertia::render('Admin/Users', [
             'users'           => $users,
-            'assignableRoles' => $assignableRoles,
+            'roles' => $assignableRoles,
             'canManageAdmins' => $authUser->isSuperAdmin(),
         ]);
     }
