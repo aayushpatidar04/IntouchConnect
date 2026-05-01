@@ -14,51 +14,53 @@
 
             <!-- Logs table -->
             <div class="bg-white rounded-2xl border border-surface-100 overflow-hidden">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-surface-100 bg-surface-50">
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                Time</th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                User</th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                Action</th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden lg:table-cell">
-                                IP</th>
-                            <th class="px-5 py-3" />
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-surface-50">
-                        <tr v-if="logs.data.length === 0">
-                            <td colspan="5" class="text-center py-10 text-sm text-surface-400">No audit logs found</td>
-                        </tr>
-                        <tr v-for="log in logs.data" :key="log.id" class="hover:bg-surface-50 transition-colors group">
-                            <td class="px-5 py-3 text-xs text-surface-400 font-mono whitespace-nowrap">
-                                {{ formatDate(log.created_at) }}
-                            </td>
-                            <td class="px-5 py-3">
-                                <span class="text-xs font-medium text-surface-700">{{ log.user?.name ?? 'System'
-                                    }}</span>
-                            </td>
-                            <td class="px-5 py-3">
-                                <span :class="['badge font-mono text-xs', actionClass(log.action)]">{{ log.action
-                                    }}</span>
-                            </td>
-                            <td class="px-5 py-3 hidden lg:table-cell text-xs text-surface-400 font-mono">{{
-                                log.ip_address ?? '—' }}</td>
-                            <td class="px-5 py-3 text-right">
-                                <button v-if="log.new_values || log.old_values" @click="viewDetail(log)"
-                                    class="text-xs text-brand-500 hover:text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    Details
-                                </button>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-surface-100 bg-surface-50">
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    Time</th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    User</th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    Action</th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden lg:table-cell">
+                                    IP</th>
+                                <th class="px-5 py-3" />
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-surface-50">
+                            <tr v-if="logs.data.length === 0">
+                                <td colspan="5" class="text-center py-10 text-sm text-surface-400">No audit logs found</td>
+                            </tr>
+                            <tr v-for="log in logs.data" :key="log.id" class="hover:bg-surface-50 transition-colors group">
+                                <td class="px-5 py-3 text-xs text-surface-400 font-mono whitespace-nowrap">
+                                    {{ formatDate(log.created_at) }}
+                                </td>
+                                <td class="px-5 py-3">
+                                    <span class="text-xs font-medium text-surface-700">{{ log.user?.name ?? 'System'
+                                        }}</span>
+                                </td>
+                                <td class="px-5 py-3">
+                                    <span :class="['badge font-mono text-xs', actionClass(log.action)]">{{ log.action
+                                        }}</span>
+                                </td>
+                                <td class="px-5 py-3 hidden lg:table-cell text-xs text-surface-400 font-mono">{{
+                                    log.ip_address ?? '—' }}</td>
+                                <td class="px-5 py-3 text-right">
+                                    <button v-if="log.new_values || log.old_values" @click="viewDetail(log)"
+                                        class="text-xs text-brand-500 hover:text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        Details
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
 
                 <!-- Pagination -->
                 <div v-if="logs.last_page > 1"

@@ -9,63 +9,65 @@
 
         <div class="p-6 animate-fade-in">
             <div class="bg-white rounded-2xl border border-surface-100 overflow-hidden">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-surface-100 bg-surface-50">
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                User
-                            </th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                Role
-                            </th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden md:table-cell">
-                                Phone</th>
-                            <th
-                                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
-                                Status</th>
-                            <th class="px-5 py-3" />
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-surface-50">
-                        <tr v-for="u in users.data" :key="u.id" class="hover:bg-surface-50 transition-colors group">
-                            <td class="px-5 py-3.5">
-                                <div class="flex items-center gap-3">
-                                    <img :src="u.avatar_url ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=e2e8f0&color=475569`"
-                                        class="w-8 h-8 rounded-full" />
-                                    <div>
-                                        <p class="font-medium text-surface-900">{{ u.name }}</p>
-                                        <p class="text-xs text-surface-400">{{ u.email }}</p>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-surface-100 bg-surface-50">
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    User
+                                </th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    Role
+                                </th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden md:table-cell">
+                                    Phone</th>
+                                <th
+                                    class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                    Status</th>
+                                <th class="px-5 py-3" />
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-surface-50">
+                            <tr v-for="u in users.data" :key="u.id" class="hover:bg-surface-50 transition-colors group">
+                                <td class="px-5 py-3.5">
+                                    <div class="flex items-center gap-3">
+                                        <img :src="u.avatar_url ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=e2e8f0&color=475569`"
+                                            class="w-8 h-8 rounded-full" />
+                                        <div>
+                                            <p class="font-medium text-surface-900">{{ u.name }}</p>
+                                            <p class="text-xs text-surface-400">{{ u.email }}</p>
+                                        </div>
                                     </div>
-                                </div>
-                            </td>
-                            <td class="px-5 py-3.5">
-                                <span v-for="r in u.roles" :key="r.id" :class="['badge', roleClass(r.name)]">{{ r.name
-                                    }}</span>
-                            </td>
-                            <td class="px-5 py-3.5 hidden md:table-cell text-surface-500 text-xs font-mono">{{ u.phone
-                                ?? '—' }}
-                            </td>
-                            <td class="px-5 py-3.5">
-                                <span
-                                    :class="['badge', u.is_active ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-500']">
-                                    {{ u.is_active ? 'Active' : 'Inactive' }}
-                                </span>
-                            </td>
-                            <td class="px-5 py-3.5 text-right">
-                                <div
-                                    class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button @click="editUser(u)"
-                                        class="text-xs text-surface-500 hover:text-surface-800">Edit</button>
-                                    <button @click="deleteUser(u)"
-                                        class="text-xs text-red-400 hover:text-red-600">Delete</button>
-                                </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                                </td>
+                                <td class="px-5 py-3.5">
+                                    <span v-for="r in u.roles" :key="r.id" :class="['badge', roleClass(r.name)]">{{ r.name
+                                        }}</span>
+                                </td>
+                                <td class="px-5 py-3.5 hidden md:table-cell text-surface-500 text-xs font-mono">{{ u.phone
+                                    ?? '—' }}
+                                </td>
+                                <td class="px-5 py-3.5">
+                                    <span
+                                        :class="['badge', u.is_active ? 'bg-brand-100 text-brand-700' : 'bg-surface-100 text-surface-500']">
+                                        {{ u.is_active ? 'Active' : 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td class="px-5 py-3.5 text-right">
+                                    <div
+                                        class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <button @click="editUser(u)"
+                                            class="text-xs text-surface-500 hover:text-surface-800">Edit</button>
+                                        <button @click="deleteUser(u)"
+                                            class="text-xs text-red-400 hover:text-red-600">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 

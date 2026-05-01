@@ -11,86 +11,91 @@
       <!-- Filters -->
       <div class="flex flex-wrap gap-3 mb-5">
         <input v-model="filters.search" @input="debouncedSearch" type="text" placeholder="Search name, phone, company…"
-          class="flex-1 min-w-[200px] rounded-xl border border-surface-200 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+          class="flex-1 min-w-[200px] w-full sm:w-auto rounded-xl border border-surface-200 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+
         <select v-model="filters.status" @change="applyFilters"
-          class="w-1/4 rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
-          <option value="">All statuses</option>
+          class="w-full sm:w-1/2 lg:w-1/4 rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+          <option value="" selected>All statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
           <option value="blocked">Blocked</option>
         </select>
+
         <select v-if="$page.props.auth.user.roles?.includes('admin')" v-model="filters.assigned_to"
           @change="applyFilters"
-          class="w-1/4 rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full sm:w-1/2 lg:w-1/4 rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400">
           <option value="">All executives</option>
           <option v-for="exec in executives" :key="exec.id" :value="exec.id">{{ exec.name }}</option>
         </select>
       </div>
 
+
       <!-- Table -->
       <div class="bg-white rounded-2xl border border-surface-100 overflow-hidden">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-surface-100 bg-surface-50">
-              <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Customer
-              </th>
-              <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Phone</th>
-              <th
-                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden md:table-cell">
-                Assigned To</th>
-              <th
-                class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden lg:table-cell">
-                Last Contact</th>
-              <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Status
-              </th>
-              <th class="px-5 py-3" />
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-surface-50">
-            <tr v-if="customers.data.length === 0">
-              <td colspan="6" class="text-center py-12 text-sm text-surface-400">No customers found</td>
-            </tr>
-            <tr v-for="c in customers.data" :key="c.id"
-              class="hover:bg-surface-50 transition-colors cursor-pointer group"
-              @click="router.visit(route('customers.show', c.id))">
-              <td class="px-5 py-3.5">
-                <div class="flex items-center gap-3">
-                  <img
-                    :src="`https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=e2e8f0&color=475569&size=40`"
-                    class="w-8 h-8 rounded-full" />
-                  <div>
-                    <p class="font-medium text-surface-900">{{ c.name }}</p>
-                    <p v-if="c.company" class="text-xs text-surface-400">{{ c.company }}</p>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-surface-100 bg-surface-50">
+                <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Customer
+                </th>
+                <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Phone</th>
+                <th
+                  class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden md:table-cell">
+                  Assigned To</th>
+                <th
+                  class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider hidden lg:table-cell">
+                  Last Contact</th>
+                <th class="text-left px-5 py-3 text-xs font-semibold text-surface-500 uppercase tracking-wider">Status
+                </th>
+                <th class="px-5 py-3" />
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-surface-50">
+              <tr v-if="customers.data.length === 0">
+                <td colspan="6" class="text-center py-12 text-sm text-surface-400">No customers found</td>
+              </tr>
+              <tr v-for="c in customers.data" :key="c.id"
+                class="hover:bg-surface-50 transition-colors cursor-pointer group"
+                @click="router.visit(route('customers.show', c.id))">
+                <td class="px-5 py-3.5">
+                  <div class="flex items-center gap-3">
+                    <img
+                      :src="`https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=e2e8f0&color=475569&size=40`"
+                      class="w-8 h-8 rounded-full" />
+                    <div>
+                      <p class="font-medium text-surface-900">{{ c.name }}</p>
+                      <p v-if="c.company" class="text-xs text-surface-400">{{ c.company }}</p>
+                    </div>
+                    <!-- Unread badge -->
+                    <span v-if="c.unread_count > 0"
+                      class="ml-1 w-5 h-5 rounded-full bg-brand-500 text-white text-[10px] font-bold flex items-center justify-center">
+                      {{ c.unread_count > 9 ? '9+' : c.unread_count }}
+                    </span>
                   </div>
-                  <!-- Unread badge -->
-                  <span v-if="c.unread_count > 0"
-                    class="ml-1 w-5 h-5 rounded-full bg-brand-500 text-white text-[10px] font-bold flex items-center justify-center">
-                    {{ c.unread_count > 9 ? '9+' : c.unread_count }}
-                  </span>
-                </div>
-              </td>
-              <td class="px-5 py-3.5 font-mono text-xs text-surface-600">+{{ c.phone }}</td>
-              <td class="px-5 py-3.5 hidden md:table-cell text-surface-500 text-xs">{{ c.assigned_to?.name ?? '—' }}
-              </td>
-              <td class="px-5 py-3.5 hidden lg:table-cell text-surface-400 text-xs">
-                {{ c.last_contacted_at ? timeAgo(c.last_contacted_at) : 'Never' }}
-              </td>
-              <td class="px-5 py-3.5">
-                <span :class="['badge', statusClass(c.status)]">{{ c.status }}</span>
-              </td>
-              <td class="px-5 py-3.5 text-right" @click.stop>
-                <Link :href="route('customers.show', c.id)"
-                  class="text-xs font-medium text-brand-600 hover:text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                  Open →
-                </Link>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+                </td>
+                <td class="px-5 py-3.5 font-mono text-xs text-surface-600">+{{ c.phone }}</td>
+                <td class="px-5 py-3.5 hidden md:table-cell text-surface-500 text-xs">{{ c.assigned_to?.name ?? '—' }}
+                </td>
+                <td class="px-5 py-3.5 hidden lg:table-cell text-surface-400 text-xs">
+                  {{ c.last_contacted_at ? timeAgo(c.last_contacted_at) : 'Never' }}
+                </td>
+                <td class="px-5 py-3.5">
+                  <span :class="['badge', statusClass(c.status)]">{{ c.status }}</span>
+                </td>
+                <td class="px-5 py-3.5 text-right" @click.stop>
+                  <Link :href="route('customers.show', c.id)"
+                    class="text-xs font-medium text-brand-600 hover:text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                    Open →
+                  </Link>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <!-- Pagination -->
         <div v-if="customers.last_page > 1"
-          class="border-t border-surface-50 px-5 py-3 flex items-center justify-between">
+          class="border-t border-surface-50 px-5 py-3 flex flex-col sm:flex-row items-center justify-between gap-2">
           <p class="text-xs text-surface-400">Showing {{ customers.from }}–{{ customers.to }} of {{ customers.total }}
           </p>
           <div class="flex gap-1">
@@ -100,6 +105,7 @@
               class="px-3 py-1.5 text-xs rounded-lg bg-surface-100 hover:bg-surface-200 transition-colors">Next →</Link>
           </div>
         </div>
+
       </div>
     </div>
 
