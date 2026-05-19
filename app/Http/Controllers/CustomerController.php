@@ -14,7 +14,7 @@ class CustomerController extends Controller
 {
     public function index(Request $request): Response
     {
-        $user  = auth()->user();
+        $user = auth()->user();
         $query = Customer::with(['assignedTo', 'latestMessage'])->withCount('documents');
 
         // Executives only see their own assigned customers
@@ -25,10 +25,10 @@ class CustomerController extends Controller
 
         if ($request->search) {
             $query->where(function ($q) use ($request) {
-                $q->where('name',    'like', "%{$request->search}%")
-                  ->orWhere('phone', 'like', "%{$request->search}%")
-                  ->orWhere('email', 'like', "%{$request->search}%")
-                  ->orWhere('company', 'like', "%{$request->search}%");
+                $q->where('name', 'like', "%{$request->search}%")
+                    ->orWhere('phone', 'like', "%{$request->search}%")
+                    ->orWhere('email', 'like', "%{$request->search}%")
+                    ->orWhere('company', 'like', "%{$request->search}%");
             });
         }
 
@@ -49,9 +49,9 @@ class CustomerController extends Controller
             ->get();
 
         return Inertia::render('Customers/Index', [
-            'customers'  => $customers,
+            'customers' => $customers,
             'executives' => $executives,
-            'filters'    => $request->only(['search', 'status', 'assigned_to']),
+            'filters' => $request->only(['search', 'status', 'assigned_to']),
         ]);
     }
 
@@ -77,9 +77,9 @@ class CustomerController extends Controller
             ->get();
 
         return Inertia::render('Customers/Show', [
-            'customer'   => $customer->load('assignedTo'),
-            'messages'   => $messages,
-            'documents'  => $documents,
+            'customer' => $customer->load('assignedTo'),
+            'messages' => $messages,
+            'documents' => $documents,
             'executives' => $executives,
         ]);
     }
@@ -87,13 +87,13 @@ class CustomerController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'name'        => 'required|string|max:191',
-            'phone'       => 'required|string|max:20',
-            'email'       => 'nullable|email|max:191',
-            'company'     => 'nullable|string|max:191',
-            'notes'       => 'nullable|string',
+            'name' => 'required|string|max:191',
+            'phone' => 'required|string|max:20',
+            'email' => 'nullable|email|max:191',
+            'company' => 'nullable|string|max:191',
+            'notes' => 'nullable|string',
             'assigned_to' => 'nullable|exists:users,id',
-            'status'      => 'in:active,inactive,blocked',
+            'status' => 'in:active,inactive,blocked',
         ]);
 
         // Phone must be unique within this company (not globally)
@@ -103,7 +103,7 @@ class CustomerController extends Controller
             return back()->withErrors(['phone' => 'This phone number already exists.']);
         }
 
-        $data['phone']      = $phone;
+        $data['phone'] = $phone;
         $data['company_id'] = auth()->user()->company_id;
 
         $customer = Customer::create($data);
@@ -117,13 +117,13 @@ class CustomerController extends Controller
         $this->authorize('update', $customer);
 
         $data = $request->validate([
-            'name'        => 'required|string|max:191',
-            'phone'       => "required|string|max:20",
-            'email'       => 'nullable|email|max:191',
-            'company'     => 'nullable|string|max:191',
-            'notes'       => 'nullable|string',
+            'name' => 'required|string|max:191',
+            'phone' => "required|string|max:20",
+            'email' => 'nullable|email|max:191',
+            'company' => 'nullable|string|max:191',
+            'notes' => 'nullable|string',
             'assigned_to' => 'nullable|exists:users,id',
-            'status'      => 'in:active,inactive,blocked',
+            'status' => 'in:active,inactive,blocked',
         ]);
 
         $phone = preg_replace('/\D/', '', $data['phone']);
@@ -148,4 +148,17 @@ class CustomerController extends Controller
 
         return redirect()->route('customers.index')->with('success', 'Customer deleted.');
     }
+
+    public function list(Request $request)
+    {
+        $perPage = (int) $request->input('per_page', 50);
+        $companyId = $request->user()->company_id;
+
+        $customers = Customer::where('company_id', $companyId)
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+        
+        return response()->json($customers);
+    }
+
 }

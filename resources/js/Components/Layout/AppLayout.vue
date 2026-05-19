@@ -23,7 +23,8 @@
             <nav class="flex-1 py-4 space-y-1 px-2 overflow-y-auto scrollbar-thin">
                 <NavItem :href="route('dashboard')" :icon="HomeIcon" label="Dashboard" :open="sidebarOpen" />
                 <NavItem :href="route('customers.index')" :icon="UsersIcon" label="Customers" :open="sidebarOpen" />
-
+                <!-- Templates — admin manages, executive sends -->
+                <NavItem :href="route('templates.index')" :icon="TemplateIcon" label="Templates" :open="sidebarOpen" />
                 <!-- Admin section -->
                 <template v-if="isAdmin">
                     <div class="pt-2 pb-1 px-2">
@@ -34,6 +35,9 @@
                     <NavItem :href="route('admin.users')" :icon="ShieldIcon" label="Users" :open="sidebarOpen" />
                     <NavItem :href="route('admin.audit-logs')" :icon="ClipboardIcon" label="Audit Logs"
                         :open="sidebarOpen" />
+                    <NavItem
+                        v-if="$page.props.auth.user.roles?.includes('admin') || $page.props.auth.user.roles?.includes('auditor')"
+                        :href="route('analytics.index')" :icon="ChartIcon" label="Analytics" :open="sidebarOpen" />
                 </template>
                 <!-- 🔹 Sign out option in sidebar -->
                 <Link :href="route('logout')" method="post" as="button"
@@ -120,6 +124,8 @@ import ShieldIcon from '@/Components/Icons/ShieldIcon.vue';
 import ClipboardIcon from '@/Components/Icons/ClipboardIcon.vue';
 import ChevronLeftIcon from '@/Components/Icons/ChevronLeftIcon.vue';
 import ChevronRightIcon from '@/Components/Icons/ChevronRightIcon.vue';
+import TemplateIcon from '@/Components/Icons/TemplateIcon.vue';
+import ChartIcon from '@/Components/Icons/ChartIcon.vue';
 import SignOutIcon from '@/Components/Icons/SignOutIcon.vue';
 
 defineProps({ title: String });

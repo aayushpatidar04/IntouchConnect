@@ -2,12 +2,14 @@
 // routes/web.php
 
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\GatewayController;
 use App\Http\Controllers\MessageController;
+use App\Http\Controllers\TemplateController;
 use Illuminate\Support\Facades\Route;
 
 // ─── Redirect root to dashboard ──────────────────────────────────────────────
@@ -19,8 +21,13 @@ Route::middleware(['auth', 'verified', 'company.active'])->group(function () {
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+    // Analytics — admin and auditor only (role check is inside the controller)
+    Route::get('/analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
+
     // ── Customers ─────────────────────────────────────────────────────────────
     Route::resource('customers', CustomerController::class)->except(['edit', 'create']);
+
+    Route::get('customers-list', [CustomerController::class, 'list'])->name('customers.list'); // legacy route for broadcast feature
 
     // ── Messages & Documents (nested under customer) ──────────────────────────
     Route::prefix('customers/{customer}')->group(function () {
@@ -35,6 +42,19 @@ Route::middleware(['auth', 'verified', 'company.active'])->group(function () {
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
     Route::patch('/documents/{document}/status', [DocumentController::class, 'updateStatus'])->name('documents.status');
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+
+    // ── Templates ─────────────────────────────────────────────────────────
+    Route::prefix('templates')->name('templates.')->group(function () {
+        Route::get('/', [TemplateController::class, 'index'])->name('index');
+        Route::post('/', [TemplateController::class, 'store'])->name('store');
+        Route::patch('/{template}', [TemplateController::class, 'update'])->name('update');
+        Route::delete('/{template}', [TemplateController::class, 'destroy'])->name('destroy');
+        Route::get('/{template}/show', [TemplateController::class, 'show'])->name('show');
+        Route::post('/{template}/preview', [TemplateController::class, 'preview'])->name('preview');
+        Route::post('/{template}/broadcast', [TemplateController::class, 'broadcast'])->name('broadcast');
+        Route::get('/broadcasts/history', [TemplateController::class, 'broadcastHistory'])->name('broadcasts.history');
+        Route::get('/broadcasts/{broadcast}', [TemplateController::class, 'broadcastShow'])->name('broadcasts.show');
+    });
 
     // ── Company-admin panel (admin + super_admin) ─────────────────────────────
     Route::prefix('admin')->name('admin.')->group(function () {

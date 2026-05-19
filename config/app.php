@@ -52,7 +52,7 @@ return [
     |
     */
 
-    'url' => env('APP_URL', 'https://crm.intouchsoftware.co.in'),
+    'url' => env('APP_URL', 'https://crm.arihantcapital.com'),
 
     /*
     |--------------------------------------------------------------------------

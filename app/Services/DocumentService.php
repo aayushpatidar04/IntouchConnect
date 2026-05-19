@@ -39,6 +39,7 @@ class DocumentService
             'size' => strlen($decoded),
             'source' => 'whatsapp',
             'status' => 'pending',
+            'company_id' => $customer->company_id,
         ]);
     }
 
@@ -64,6 +65,7 @@ class DocumentService
             'size' => $file->getSize(),
             'source' => 'manual_upload',
             'status' => 'pending',
+            'company_id' => $customer->company_id,
         ]);
     }
 

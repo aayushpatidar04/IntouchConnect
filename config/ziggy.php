@@ -7,7 +7,9 @@ return [
     // Only expose routes that start with these groups (security best practice)
     'only' => [
         'dashboard',
+        'analytics.*',
         'customers.*',
+        'templates.*',
         'messages.*',
         'documents.*',
         'gateway.*',
