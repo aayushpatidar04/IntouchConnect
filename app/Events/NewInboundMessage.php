@@ -24,7 +24,9 @@ class NewInboundMessage implements ShouldBroadcastNow
         $channels = [];
 
         // Always broadcast to the admin notification channel
-        $channels[] = new Channel('admin-notifications');
+	$channels[] = new Channel(
+            'admin-notifications.' . $this->message->company_id
+        );
 
         // Also broadcast to the assigned executive's channel if there is one
         $assignedTo = $this->message->customer->assigned_to ?? null;

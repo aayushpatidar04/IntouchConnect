@@ -14,7 +14,6 @@ class Template extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'company_id',
         'created_by',
         'name',
         'body',
@@ -35,12 +34,9 @@ class Template extends Model
     // ── Global scope ──────────────────────────────────────────────────────────
     protected static function booted(): void
     {
-        static::addGlobalScope(new CompanyScope());
+        // static::addGlobalScope(new CompanyScope());
 
         static::creating(function ($template) {
-            if (empty($template->company_id) && auth()->check()) {
-                $template->company_id = auth()->user()->company_id;
-            }
             if (empty($template->created_by) && auth()->check()) {
                 $template->created_by = auth()->id();
             }
@@ -56,11 +52,6 @@ class Template extends Model
     }
 
     // ── Relationships ─────────────────────────────────────────────────────────
-
-    public function company(): BelongsTo
-    {
-        return $this->belongsTo(Company::class);
-    }
 
     public function createdBy(): BelongsTo
     {

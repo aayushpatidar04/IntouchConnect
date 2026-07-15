@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
@@ -15,6 +16,10 @@ class Company extends Model
         'name',
         'slug',
         'is_active',
+	'parent_company_id',
+	'external_department_id',
+	'hierarchy_path',
+	'last_assigned_executive_id'
     ];
 
     protected function casts(): array
@@ -79,5 +84,25 @@ class Company extends Model
     public function admins(): HasMany
     {
         return $this->hasMany(User::class)->whereHas('roles', fn($q) => $q->where('name', 'admin'));
+    }
+
+    public function adminAccess(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'user_company_access')
+            ->whereHas('roles', fn($q) => $q->where('name', 'admin'))
+            ->withTimestamps();
+    }
+
+    public function accessibleUsers()
+    {
+        return $this->belongsToMany(
+            User::class,
+            'user_company_access'
+        );
+    }
+
+    public function lastAssignedExecutive()
+    {
+        return $this->belongsTo(User::class, 'last_assigned_executive_id');
     }
 }

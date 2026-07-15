@@ -10,6 +10,7 @@ return [
         'analytics.*',
         'customers.*',
         'templates.*',
+	'groups.*',
         'messages.*',
         'documents.*',
         'gateway.*',
@@ -17,5 +18,7 @@ return [
         'admin.*',
         'login',
         'logout',
+	'switch-company',
+	'api.unread-messages'	
     ],
 ];

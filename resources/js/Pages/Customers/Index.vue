@@ -73,7 +73,10 @@
                     </span>
                   </div>
                 </td>
-                <td class="px-5 py-3.5 font-mono text-xs text-surface-600">+{{ c.phone }}</td>
+                <td class="px-5 py-3.5 font-mono text-xs text-surface-600">
+  			+{{ c.phone.slice(0, 2) + '*'.repeat(c.phone.length - 4) + c.phone.slice(-2) }}
+		</td>
+
                 <td class="px-5 py-3.5 hidden md:table-cell text-surface-500 text-xs">{{ c.assigned_to?.name ?? '—' }}
                 </td>
                 <td class="px-5 py-3.5 hidden lg:table-cell text-surface-400 text-xs">

@@ -42,6 +42,15 @@ class HandleInertiaRequests extends Middleware
                 'error'   => fn () => $request->session()->get('error'),
                 'warning' => fn () => $request->session()->get('warning'),
             ],
+	    'accessibleCompanies' => function () {
+                if (!auth()->check()) {
+                    return [];
+                }
+                return auth()->user()
+                    ->accessibleCompanies()
+                    ->select('companies.id', 'companies.name')
+                    ->get();
+            },
         ]);
     }
 }

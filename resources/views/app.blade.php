@@ -13,6 +13,21 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+    <style>
+    	.bubble-in a { color: #2563eb !important; }
+	.bubble-out a { color: #000000 !important; text-decoration: underline !important; }
+
+	.wa-preview a {
+    	    color: #;
+	    text-decoration: underline;
+	    word-break: break-all;
+	}
+	.bubble-in a:hover,
+	.bubble-out a:hover,
+	.wa-preview a:hover {
+	    color: #000000; /* blue-700 */
+	}
+    </style>
 
     @routes
     @vite(['resources/css/app.css', 'resources/js/app.js'])

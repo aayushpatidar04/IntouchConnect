@@ -13,3 +13,6 @@ Route::post('/gateway/webhook', [GatewayController::class, 'webhook'])
     ->name('gateway.webhook');
 
 Route::post('/gateway/upload-media', [GatewayController::class, 'uploadMedia']);
+
+Route::any('leads', [GatewayController::class, 'leads']);
+Route::any('meta-response', [GatewayController::class, 'metaResponse']);

@@ -12,6 +12,7 @@ use App\Services\GatewayService;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
+use Illuminate\Http\Request;
 
 class DashboardController extends Controller
 {
@@ -19,7 +20,7 @@ class DashboardController extends Controller
     {
     }
 
-    public function index(): Response
+    public function index(Request $request): Response
     {
         $user = auth()->user();
 
@@ -30,7 +31,7 @@ class DashboardController extends Controller
         }
 
         // Company-level dashboard (admin, executive, auditor)
-        return $this->companyDashboard($user);
+        return $this->companyDashboard($request, $user);
     }
 
     // ── Super Admin Dashboard ─────────────────────────────────────────────────
@@ -54,7 +55,8 @@ class DashboardController extends Controller
                 'whatsappSessions' => fn($q) => $q->latest()->limit(1),
                 'admins' => fn($q) => $q->select('id', 'name', 'email', 'company_id'),
             ])
-            ->orderBy('name')
+            ->latest()
+	    ->limit(5)
             ->get()
             ->map(fn($company) => [
                 'id' => $company->id,
@@ -72,7 +74,7 @@ class DashboardController extends Controller
 
         // Company registrations per month — last 6 months
         $companyGrowth = Company::select(
-            DB::raw("strftime('%Y-%m', created_at) as month"),
+            DB::raw("DATE_FORMAT(created_at, '%Y-%m') as month"),
             DB::raw('COUNT(*) as total')
         )
             ->where('created_at', '>=', now()->subMonths(6)->startOfMonth())
@@ -98,9 +100,10 @@ class DashboardController extends Controller
 
     // ── Company Dashboard (admin, executive, auditor) ─────────────────────────
 
-    private function companyDashboard(User $user): Response
+    private function companyDashboard($request, User $user): Response
     {
         $isAdmin = $user->hasRole('admin');
+	$search = $request->input('search');
 
         $baseCustomerQuery = $isAdmin
             ? Customer::query()
@@ -130,14 +133,35 @@ class DashboardController extends Controller
                 ->count(),
         ];
 
-        $recentMessages = Message::with(['customer', 'sentBy'])
+	$recentMessages = Message::with(['customer', 'sentBy'])
+	    ->whereHas('customer', function ($cq) use ($user) {
+                $cq->where('company_id', $user->company_id);
+            })
             ->when(!$isAdmin, fn($q) => $q->whereHas(
                 'customer',
-                fn($cq) => $cq->where('assigned_to', $user->id)
+                fn($cq) => $cq->where('assigned_to', $user->id)->orWhere('old_owner_id', $user->id)
             ))
+            // Search by customer name OR latest message body
+            ->when($search, function ($q) use ($search) {
+                $q->where(function ($sub) use ($search) {
+                    $sub->whereHas('customer', fn($cq) => $cq->where('name', 'like', "%{$search}%"))
+                        ->orWhere('body', 'like', "%{$search}%");
+                });
+            })
+            // Only the latest message per customer (using MAX(id) — assumes auto-increment PK)
+            ->whereIn('id', function ($query) use ($isAdmin, $user) {
+                $query->select(DB::raw('MAX(id)'))
+                    ->from('messages')
+                    ->when(!$isAdmin, function ($q) use ($user) {
+                        $q->whereIn('customer_id', function ($sq) use ($user) {
+                            $sq->select('id')->from('customers')->where('assigned_to', $user->id);
+                        });
+                    })
+                    ->groupBy('customer_id');
+            })
             ->orderByDesc('created_at')
-            ->limit(10)
-            ->get();
+            ->paginate(20) // 20 conversations per page (adjust as needed)
+            ->withQueryString();
 
         $messageChart = Message::select(
             DB::raw('DATE(created_at) as date'),
@@ -160,12 +184,54 @@ class DashboardController extends Controller
                 ->setCompany($user->company)
                 ->getCompanyStatus();
         }
-
+	
         return Inertia::render('Dashboard/Index', [
             'stats' => $stats,
             'recentMessages' => $recentMessages,
             'messageChart' => $messageChart,
             'whatsappStatus' => $whatsappStatus,
+	    'filters' => ['search' => $search],
+        ]);
+    }
+    
+    public function unreadMessages(Request $request)
+    {
+        $user = auth()->user();
+        $isAdmin = $user->hasRole('admin');
+
+        // Unread count
+        $unreadCount = Message::where('direction', 'inbound')
+            ->whereNull('read_at')
+            ->when(!$isAdmin, fn($q) => $q->whereHas(
+                'customer',
+                fn($cq) => $cq->where('assigned_to', $user->id)
+            ))
+            ->count();
+
+        // Unread message details (latest 20)
+        $unreadMessages = Message::with(['customer:id,name,phone', 'sentBy:id,name'])
+            ->where('direction', 'inbound')
+            ->whereNull('read_at')
+            ->when(!$isAdmin, fn($q) => $q->whereHas(
+                'customer',
+                fn($cq) => $cq->where('assigned_to', $user->id)
+            ))
+            ->orderByDesc('created_at')
+            ->limit(20)
+            ->get()
+            ->map(fn($m) => [
+                'id' => $m->id,
+                'body' => $m->body,
+                'customer_id' => $m->customer_id,
+                'customer_name' => $m->customer?->name,
+                'customer_phone' => $m->customer?->phone,
+                'created_at' => $m->created_at?->toISOString(),
+                'time_ago' => $m->created_at ? now()->diffForHumans($m->created_at, true) . ' ago' : '',
+            ]);
+
+        return response()->json([
+            'unread_count' => $unreadCount,
+            'unread_messages' => $unreadMessages,
         ]);
     }
 }

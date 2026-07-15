@@ -28,6 +28,7 @@
 
                 <NavItem :href="route('superadmin.companies.index')" :icon="BuildingIcon" label="Companies"
                     :open="sidebarOpen" />
+		<NavItem :href="route('superadmin.templates.index')" :icon="TemplateIcon" label="Templates" :open="sidebarOpen" />
             </nav>
 
             <!-- Super admin badge -->
@@ -93,14 +94,8 @@ import ToastStack from '@/Components/UI/ToastStack.vue';
 import HomeIcon from '@/Components/Icons/HomeIcon.vue';
 import ChevronLeftIcon from '@/Components/Icons/ChevronLeftIcon.vue';
 import ChevronRightIcon from '@/Components/Icons/ChevronRightIcon.vue';
-
-// Inline building/office icon — no new icon file needed
-const BuildingIcon = {
-    template: `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-            d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-    </svg>`
-};
+import BuildingIcon from '@/Components/Icons/BuildingIcon.vue';
+import TemplateIcon from '@/Components/Icons/TemplateIcon.vue';
 
 defineProps({ title: String });
 

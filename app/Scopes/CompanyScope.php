@@ -32,8 +32,22 @@ class CompanyScope implements Scope
             return;
         }
 
-        // All other roles (admin, executive, auditor) are scoped to their company
-        if ($user->company_id) {
+	if ($user->hasRole('executive')) {
+	    $builder->where(function ($q) use ($user, $model) {
+            $q->where($model->getTable().'.company_id', $user->company_id);
+
+            if (in_array('old_owner_id', $model->getConnection()
+                ->getSchemaBuilder()
+                ->getColumnListing($model->getTable()))) {
+            	    $q->orWhere($model->getTable().'.old_owner_id', $user->id);
+        	}
+	    });
+    	    return;
+	}
+
+
+        // All other roles (admin, auditor) are scoped to their company
+        if ($user->hasAnyRole(['admin', 'auditor']) && $user->company_id) {
             $builder->where($model->getTable() . '.company_id', $user->company_id);
         }
     }

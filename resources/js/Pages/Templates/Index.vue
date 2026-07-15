@@ -1,10 +1,10 @@
 <template>
     <AppLayout title="Templates">
         <template #actions>
-            <button v-if="isAdmin" @click="openCreate"
+            <!-- <button v-if="isAdmin" @click="openCreate"
                 class="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors shadow-sm shadow-brand-500/30">
                 + New Template
-            </button>
+            </button> -->
             <Link :href="route('templates.broadcasts.history')"
                 class="text-sm text-surface-500 hover:text-surface-800 px-3 py-2 rounded-xl hover:bg-surface-100 transition-colors">
                 Broadcast History
@@ -78,7 +78,7 @@
                         </button>
 
                         <!-- Admin: Edit + Delete -->
-                        <template v-if="isAdmin">
+                        <!-- <template v-if="isAdmin">
                             <button @click="openEdit(t)"
                                 class="px-3 py-2 text-xs text-surface-500 hover:text-surface-800 border border-surface-200 rounded-xl hover:bg-surface-50 transition-colors">
                                 Edit
@@ -87,7 +87,7 @@
                                 class="px-3 py-2 text-xs text-red-400 hover:text-red-600 border border-red-100 rounded-xl hover:bg-red-50 transition-colors">
                                 Delete
                             </button>
-                        </template>
+                        </template> -->
                     </div>
                 </div>
 
@@ -404,6 +404,45 @@
 
                                 <!-- Right: customer selection -->
                                 <div class="p-5 flex flex-col gap-3">
+				    <div class="flex items-center justify-between">
+                                        <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider">
+                                            Select Groups
+                                            <span class="text-brand-500 ml-1">({{ selectedGroups.length }}
+                                                selected)</span>
+                                        </h3>
+                                        <div class="flex gap-2">
+                                            <button @click="selectAllGroups"
+                                                class="text-xs text-brand-500 hover:text-brand-700">All</button>
+                                            <button @click="deselectAllGroups"
+                                                class="text-xs text-surface-400 hover:text-surface-600">None</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Group search -->
+                                    <input v-model="groupSearch" placeholder="Search groups…"
+                                        class="input-field text-xs" />
+
+                                    <!-- Group list -->
+                                    <div
+                                        class="flex-1 overflow-y-auto max-h-40 border border-surface-100 rounded-xl divide-y divide-surface-50">
+                                        <label v-for="g in filteredGroups" :key="g.id"
+                                            class="flex items-center gap-3 px-3 py-2.5 hover:bg-surface-50 cursor-pointer">
+                                            <input type="checkbox" :value="g.id" v-model="selectedGroups"
+                                                class="rounded text-brand-500 shrink-0" />
+                                            <div class="min-w-0">
+                                                <p class="text-xs font-medium text-surface-800 truncate">{{ g.name }}
+                                                </p>
+                                                <p class="text-[10px] text-surface-400">{{ g.customers_count }}
+                                                    customers</p>
+                                            </div>
+                                        </label>
+                                        <p v-if="!filteredGroups.length"
+                                            class="text-xs text-surface-400 text-center py-6">
+                                            No groups found.
+                                        </p>
+                                    </div>
+
+
                                     <div class="flex items-center justify-between">
                                         <h3 class="text-xs font-semibold text-surface-500 uppercase tracking-wider">
                                             Select Customers
@@ -452,10 +491,10 @@
                                     </div>
 
                                     <!-- ETA estimate -->
-                                    <div v-if="selectedCustomers.length > 0"
+				    <div v-if="(selectedCustomers.length > 0 || selectedGroups.length > 0)"
                                         class="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-700">
                                         ⏱️ Estimated delivery: <strong>~{{ etaMinutes }} minutes</strong>
-                                        ({{ selectedCustomers.length }} messages at ~60s apart)
+                                        ({{ totalRecipients }} messages at ~4s apart)
                                     </div>
                                 </div>
                             </div>
@@ -468,12 +507,20 @@
                             </p>
                             <div class="flex gap-2 shrink-0">
                                 <button @click="closeSend" class="px-4 py-2 text-sm text-surface-600">Cancel</button>
-                                <button @click="submitBroadcast" :disabled="selectedCustomers.length === 0 || sending"
+				<button @click="submitBroadcast"
+                                    :disabled="(selectedCustomers.length === 0 && selectedGroups.length === 0) || sending"
                                     class="px-5 py-2 bg-brand-500 text-white text-sm font-medium rounded-xl hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
                                     <span v-if="sending"
                                         class="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                    {{ sending ? 'Queuing…' : `Send to ${selectedCustomers.length}
-                                    customer${selectedCustomers.length === 1 ? '' : 's'}` }}
+                                    <template v-else>
+                                        Send to
+                                        <span class="font-semibold">
+                                            {{ totalRecipients }}
+                                        </span>
+                                        {{ totalRecipients === 1 ? 'recipient' :
+                                            'recipients' }}
+                                    </template>
+                                    <span v-if="sending">Queuing…</span>
                                 </button>
                             </div>
                         </div>
@@ -770,6 +817,21 @@ const selectedCustomers = ref([]);
 const customerSearch = ref('');
 const customerFilter = ref('');
 const allCustomers = ref([]);
+const selectedGroups = ref([])
+const groupSearch = ref('')
+const allGroups = ref([])
+
+const filteredGroups = computed(() => {
+    let list = allGroups.value
+    if (groupSearch.value) {
+        const q = groupSearch.value.toLowerCase()
+        list = list.filter(g => g.name.toLowerCase().includes(q))
+    }
+    return list
+})
+
+function selectAllGroups() { selectedGroups.value = filteredGroups.value.map(g => g.id) }
+function deselectAllGroups() { selectedGroups.value = [] }
 
 const sendForm = reactive({ variable_values: {} });
 
@@ -819,19 +881,46 @@ const filteredCustomers = computed(() => {
 });
 
 const etaMinutes = computed(() => {
-    const n = selectedCustomers.value.length;
+    // count direct customers
+    const directCount = selectedCustomers.value.length;
+
+    // count customers from groups (flatten group memberships)
+    const groupCustomerIds = selectedGroups.value
+        .map(groupId => {
+            const g = allGroups.value.find(gr => gr.id === groupId);
+            return g?.customers?.map(c => c.id) ?? [];
+        })
+        .flat();
+
+    // merge and deduplicate
+    const uniqueIds = new Set([...selectedCustomers.value, ...groupCustomerIds]);
+    const n = uniqueIds.size;
+
     if (n <= 1) return '< 1';
-    // Each message ~4 seconds, so total time = n * 4s
-    const totalSeconds = n * 4;
-    return Math.ceil(totalSeconds / 60); // convert to minutes
+    const totalSeconds = n * 4; // ~4s per message
+    return Math.ceil(totalSeconds / 60);
 });
+
+const totalRecipients = computed(() => {
+    const groupCustomerIds = selectedGroups.value
+        .map(groupId => {
+            const g = allGroups.value.find(gr => gr.id === groupId);
+            return g?.customers?.map(c => c.id) ?? [];
+        })
+        .flat();
+    const uniqueIds = new Set([...selectedCustomers.value, ...groupCustomerIds]);
+    return uniqueIds.size;
+});
+
 
 
 async function openSend(t) {
     sendingTemplate.value = t;
     sendForm.variable_values = {};
     selectedCustomers.value = [];
+    selectedGroups.value = []
     customerSearch.value = '';
+    groupSearch.value = ''
     showSend.value = true;
 
     // Load customers
@@ -845,6 +934,13 @@ async function openSend(t) {
     } catch {
         allCustomers.value = [];
     }
+
+    try {
+        const { data } = await axios.get(route('groups.list'), {
+            params: { per_page: 200 }
+        });
+        allGroups.value = data?.data?.data ?? data?.data ?? []
+    } catch { allGroups.value = [] }
 }
 
 function closeSend() { showSend.value = false; }
@@ -853,11 +949,12 @@ function selectAllCustomers() { selectedCustomers.value = filteredCustomers.valu
 function deselectAllCustomers() { selectedCustomers.value = []; }
 
 async function submitBroadcast() {
-    if (!selectedCustomers.value.length) return;
+    if (!selectedCustomers.value.length && !selectedGroups.value.length) return;
     sending.value = true;
     try {
         const { data } = await axios.post(route('templates.broadcast', sendingTemplate.value.id), {
             customer_ids: selectedCustomers.value,
+	    group_ids: selectedGroups.value,
             variable_values: sendForm.variable_values,
         });
         broadcastResult.value = data;

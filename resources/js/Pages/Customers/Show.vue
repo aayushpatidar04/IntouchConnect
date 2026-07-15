@@ -23,12 +23,13 @@
                         <img :src="avatarUrl" class="w-12 h-12 rounded-2xl object-cover" />
                         <div class="min-w-0">
                             <p class="font-semibold text-surface-900 text-sm">{{ customer.name }}</p>
-                            <p class="text-xs font-mono text-surface-400">+{{ customer.phone }}</p>
+			    <p class="text-xs font-mono text-surface-400">
+				+{{ customer.phone.slice(0, 2) + '*'.repeat(customer.phone.length - 4) + customer.phone.slice(-2) }}
+			    </p>
                         </div>
                     </div>
                     <div class="space-y-2 text-xs">
                         <InfoRow icon="🏢" :value="customer.company" label="Company" />
-                        <InfoRow icon="✉️" :value="customer.email" label="Email" />
                         <InfoRow icon="👤" :value="customer.assigned_to?.name" label="Executive" />
                         <div class="flex items-center justify-between pt-1">
                             <span class="text-surface-400">Status</span>
@@ -126,7 +127,7 @@
 
             <!-- Chat window -->
             <div class="flex-1 overflow-hidden w-full">
-                <ChatWindow :customer="customer" :initial-messages="messages" @message-sent="markRead"
+                <ChatWindow :customer="customer" :initial-messages="messages" :templates="templates" @message-sent="markRead"
                     @document-updated="refreshDocs" />
             </div>
         </div>
@@ -163,6 +164,7 @@ const props = defineProps({
     messages: { type: Array, default: () => [] },
     documents: { type: Array, default: () => [] },
     executives: { type: Array, default: () => [] },
+    templates: { type: Array, default: () => [] },
 });
 
 const docsOpen = ref(false);

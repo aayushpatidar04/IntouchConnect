@@ -168,32 +168,78 @@
                     <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="showAddAdmin = false" />
                     <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-slide-up">
                         <h2 class="text-base font-semibold mb-5">Add Admin to {{ company.name }}</h2>
+			<div class="flex gap-2 mb-5">
+                            <button type="button" @click="adminMode = 'existing'" :class="[
+                                'px-4 py-2 rounded-xl text-sm font-medium transition',
+                                adminMode === 'existing'
+                                    ? 'bg-brand-500 text-white'
+                                    : 'bg-surface-100 text-surface-700'
+                            ]">
+                                Existing Admin
+                            </button>
+
+                            <button type="button" @click="adminMode = 'new'" :class="[
+                                'px-4 py-2 rounded-xl text-sm font-medium transition',
+                                adminMode === 'new'
+                                    ? 'bg-brand-500 text-white'
+                                    : 'bg-surface-100 text-surface-700'
+                            ]">
+                                New Admin
+                            </button>
+                        </div>
                         <form @submit.prevent="submitAdmin" class="space-y-4">
-                            <div>
-                                <label class="block text-xs font-medium mb-1">Name *</label>
-                                <input v-model="adminForm.name" required class="input-field" />
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium mb-1">Email *</label>
-                                <input v-model="adminForm.email" type="email" required class="input-field" />
-                            </div>
-                            <div class="grid grid-cols-2 gap-3">
+			    <div v-if="adminMode === 'existing'">
                                 <div>
-                                    <label class="block text-xs font-medium mb-1">Password *</label>
-                                    <input v-model="adminForm.password" type="password" required minlength="8"
-                                        class="input-field" />
+                                    <label class="block text-xs font-medium mb-3">
+                                        Manage Admin Access
+                                    </label>
+
+                                    <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                        <label v-for="admin in admins" :key="admin.id"
+                                            class="flex items-center gap-3 p-3 rounded-xl border border-surface-200 hover:bg-surface-50 cursor-pointer">
+                                            <input type="checkbox" :value="admin.id" v-model="adminForm.admin_ids"
+                                                class="rounded border-surface-300 text-brand-500 focus:ring-brand-500" />
+
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-sm font-medium truncate">
+                                                    {{ admin.name }}
+                                                </p>
+
+                                                <p class="text-xs text-surface-500 truncate">
+                                                    {{ admin.email }}
+                                                </p>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-if="adminMode === 'new'">
+                                <div>
+                                    <label class="block text-xs font-medium mb-1">Name *</label>
+                                    <input v-model="adminForm.name" required class="input-field" />
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium mb-1">Confirm *</label>
-                                    <input v-model="adminForm.password_confirmation" type="password" required
-                                        class="input-field" />
+                                    <label class="block text-xs font-medium mb-1">Email *</label>
+                                    <input v-model="adminForm.email" type="email" required class="input-field" />
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label class="block text-xs font-medium mb-1">Password *</label>
+                                        <input v-model="adminForm.password" type="password" required minlength="8"
+                                            class="input-field" />
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium mb-1">Confirm *</label>
+                                        <input v-model="adminForm.password_confirmation" type="password" required
+                                            class="input-field" />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium mb-1">Phone</label>
+                                    <input v-model="adminForm.phone" class="input-field" />
                                 </div>
                             </div>
-                            <div>
-                                <label class="block text-xs font-medium mb-1">Phone</label>
-                                <input v-model="adminForm.phone" class="input-field" />
-                            </div>
-                            <div class="flex justify-end gap-2 pt-1">
+			    <div class="flex justify-end gap-2 pt-1">
                                 <button type="button" @click="closeAdminModal"
                                     class="px-4 py-2 text-sm text-surface-600">Cancel</button>
                                 <button type="submit" :disabled="submitting"
@@ -236,19 +282,12 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { Link, router } from '@inertiajs/vue3';
 import SuperAdminLayout from '@/Components/Layout/SuperAdminLayout.vue';
 import { useToast } from '@/Composables/useToast';
-
-// Inline InfoRow component
-const InfoRow = {
-    props: { label: String, value: String, mono: Boolean },
-    template: `<div class="flex items-center justify-between gap-2">
-        <span class="text-xs text-surface-400 shrink-0">{{ label }}</span>
-        <span :class="['text-xs text-right text-surface-700 truncate', mono ? 'font-mono' : '']">{{ value ?? '—' }}</span>
-    </div>`,
-};
+import axios from 'axios';
+import InfoRow from '@/Components/UI/InfoRow2.vue';
 
 const props = defineProps({
     company:       { type: Object, required: true },
@@ -261,8 +300,10 @@ const showAddAdmin    = ref(false);
 const showEditCompany = ref(false);
 const editingAdmin    = ref(null);
 const submitting      = ref(false);
+const adminMode = ref('existing')
+const admins = ref([])
 
-const adminForm = reactive({ name: '', email: '', password: '', password_confirmation: '', phone: '' });
+const adminForm = reactive({ name: '', email: '', password: '', password_confirmation: '', phone: '', admin_ids: [] });
 const editCompanyForm = reactive({ name: props.company.name });
 
 // ── Gateway session display ───────────────────────────────────────────────────
@@ -380,6 +421,27 @@ function logoutSession() {
         onError:   () => toast.error('Failed to reset session.'),
     });
 }
+
+const fetchAdmins = async () => {
+    try {
+        const response = await axios.get(
+            route('superadmin.companies.available-admins', props.company.id)
+        )
+
+        admins.value = response.data;
+        adminForm.admin_ids = response.data
+            .filter(admin => admin.checked)
+            .map(admin => admin.id)
+    } catch (error) {
+        console.error(error)
+    }
+}
+
+watch(showAddAdmin, (value) => {
+    if (value) {
+        fetchAdmins()
+    }
+})
 </script>
 
 <style scoped>

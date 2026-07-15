@@ -21,6 +21,11 @@ class MessageController extends Controller
             'body' => 'required|string|max:4096',
         ]);
 
+	$user = auth()->user();
+
+        // Resolve correct session
+        $sessionId = app(\App\Services\MessageRoutingService::class)->resolveOutgoingSession($customer, $user);
+
         // Set company context so GatewayService uses the right sessionId
         $this->gateway->forAuthUser();
 
@@ -33,7 +38,7 @@ class MessageController extends Controller
 
         $message = Message::create([
             'company_id'  => auth()->user()->company_id,
-            'session_id'  => auth()->user()->company?->session_id,
+            'session_id'  => $sessionId,
             'customer_id' => $customer->id,
             'sent_by'     => auth()->id(),
             'direction'   => 'outbound',
@@ -44,9 +49,11 @@ class MessageController extends Controller
 
         try {
             $result = $this->gateway->sendMessage($customer->phone, $data['body'], $message->id);
+	    \Log::info($result);
             $message->update([
                 'status'         => 'queued',
                 'gateway_job_id' => $result['job_id'] ?? null,
+		'whatsapp_message_id' => $result['wa_message_id'] ?? null,
             ]);
         } catch (\Throwable $e) {
             $message->update(['status' => 'failed', 'failure_reason' => $e->getMessage()]);

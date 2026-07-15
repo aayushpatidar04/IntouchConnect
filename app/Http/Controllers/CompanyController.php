@@ -9,7 +9,9 @@ use App\Services\AuditService;
 use App\Services\GatewayService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -243,29 +245,60 @@ class CompanyController extends Controller
     {
         $this->authorizeSuperAdmin();
 
-        $data = $request->validate([
-            'name'     => 'required|string|max:191',
-            'email'    => 'required|email|unique:users,email',
-            'password' => 'required|string|min:8|confirmed',
-            'phone'    => 'nullable|string|max:20',
-        ]);
+        DB::beginTransaction();
+        try {
+            // Case 1: existing admins sync
+            if ($request->filled('admin_ids')) {
+                $validated = $request->validate([
+                    'admin_ids' => 'array|min:1',
+                    'admin_ids.*' => 'integer|exists:users,id',
+                ]);
 
-        $admin = User::create([
-            'company_id' => $company->id,
-            'name'       => $data['name'],
-            'email'      => $data['email'],
-            'password'   => Hash::make($data['password']),
-            'phone'      => $data['phone'] ?? null,
-            'is_active'  => true,
-        ]);
-        $admin->assignRole('admin');
+                $adminIds = $validated['admin_ids'];
 
-        AuditService::log('superadmin.admin_created', $admin, [], [
-            'company_id' => $company->id,
-            'email'      => $admin->email,
-        ]);
+                // Sync pivot: remove old, add new
+                $company->adminAccess()->sync($adminIds);
 
-        return back()->with('success', "Admin {$admin->email} added to {$company->name}.");
+                AuditService::log('superadmin.admin_synced', $company, [], [
+                    'company_id' => $company->id,
+                    'admin_ids' => $adminIds,
+                ]);
+
+                DB::commit();
+                return back()->with('success', "Admins synced to {$company->name}.");
+            }
+
+            // Case 2: new admin creation
+            $data = $request->validate([
+                'name' => 'required|string|max:191',
+                'email' => 'required|email|unique:users,email',
+                'password' => 'required|string|min:8|confirmed',
+                'phone' => 'nullable|string|max:20',
+            ]);
+
+            $admin = User::create([
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+                'phone' => $data['phone'] ?? null,
+                'is_active' => true,
+            ]);
+            $admin->assignRole('admin');
+
+            // Attach new admin to company via pivot
+            $company->admins()->attach($admin->id);
+
+            AuditService::log('superadmin.admin_created', $admin, [], [
+                'company_id' => $company->id,
+                'email' => $admin->email,
+            ]);
+
+            DB::commit();
+            return back()->with('success', "Admin {$admin->email} added to {$company->name}.");
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return back()->with('error', 'Failed to update admins: ' . $e->getMessage());
+        }
     }
 
     public function updateAdmin(Request $request, Company $company, User $user): RedirectResponse
@@ -331,5 +364,67 @@ class CompanyController extends Controller
 
         return back()->with('success', "Company \"{$company->name}\" {$status}.");
     }
+
+    public function switchCompany(Request $request)
+    {
+        $request->validate([
+            'company_id' => ['required', 'exists:companies,id']
+        ]);
+
+        $user = auth()->user();
+
+        // SECURITY CHECK
+        $hasAccess = $user->accessibleCompanies()
+            ->where('companies.id', $request->company_id)
+            ->exists();
+
+        if (!$hasAccess) {
+            abort(403, 'Unauthorized company access.');
+        }
+
+        $user->update([
+            'company_id' => $request->company_id
+        ]);
+
+        auth()->setUser($user->fresh());
+
+        return back()->with('success', 'Company switched successfully.');
+    }
+
+    public function availableAdmins(Company $company)
+    {
+        $admins = User::role('admin')
+            ->select('id', 'name', 'email')
+            ->get()
+            ->map(function ($admin) use ($company) {
+
+                $admin->checked = $admin->accessibleCompanies()
+                    ->where('companies.id', $company->id)
+                    ->exists();
+
+                return $admin;
+            });
+
+        return response()->json($admins);
+    }
     
+    public function bitrixDepartments(){
+	$url = 'https://arihantapicore.arihantcapital.com/V1/bitrix24/Getdepartments';
+
+	$response = Http::withHeaders([
+	    'Accept' => '*/*',
+	    'Authorization' => 'Basic QXJpaGFudDpBcmloYW50QDIwMjE=',
+	])->get($url);
+
+	return response()->json($response->json(), $response->status());
+
+    }    
+
+    public function bitrixAgents(){
+	$url = 'https://arihantapicore.arihantcapital.com/V1/bitrix24/GetAgents';
+
+	$response = Http::withBasicAuth('Arihant', 'Arihant@2021')->get($url);
+	
+	return response()->json($response->json(), $response->status());
+    }
 }

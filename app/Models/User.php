@@ -22,6 +22,7 @@ class User extends Authenticatable
         'avatar',
         'is_active',
         'last_seen_at',
+	'bitrix_user_id',
     ];
 
     protected $hidden = ['password', 'remember_token'];
@@ -82,5 +83,17 @@ class User extends Authenticatable
     public function isCompanyAdmin(): bool
     {
         return $this->hasRole('admin');
+    }
+
+    public function groups(){
+        return $this->hasMany(Group::class, 'created_by');
+    }
+
+    public function accessibleCompanies()
+    {
+        return $this->belongsToMany(
+            Company::class,
+            'user_company_access'
+        );
     }
 }

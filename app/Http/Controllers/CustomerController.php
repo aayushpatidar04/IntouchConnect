@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\Template;
 use App\Models\User;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
@@ -15,12 +16,16 @@ class CustomerController extends Controller
     public function index(Request $request): Response
     {
         $user = auth()->user();
-        $query = Customer::with(['assignedTo', 'latestMessage'])->withCount('documents');
-
+        $query = Customer::withoutGlobalScope(CompanyScope::class)->with(['assignedTo', 'oldOwner', 'latestMessage'])->withCount('documents');
+//	dd(Customer::whereNotNull('old_owner_id')->get());
         // Executives only see their own assigned customers
-        if ($user->hasRole('executive')) {
-            $query->where('assigned_to', $user->id);
-        }
+	if ($user->hasRole('executive')) {
+	    $query->where(function ($q) use ($user) {
+	        $q->where('assigned_to', $user->id)
+        	  ->orWhere('old_owner_id', $user->id);
+	    });
+	}
+
         // Admin + auditor see all customers in their company (CompanyScope handles this)
 
         if ($request->search) {
@@ -39,7 +44,7 @@ class CustomerController extends Controller
         if ($request->assigned_to) {
             $query->where('assigned_to', $request->assigned_to);
         }
-
+	
         $customers = $query->orderByDesc('last_contacted_at')->paginate(20)->withQueryString();
 
         // Executives list — scoped to same company
@@ -57,6 +62,7 @@ class CustomerController extends Controller
 
     public function show(Customer $customer): Response
     {
+	$user = auth()->user();
         $this->authorize('view', $customer);
 
         AuditService::log('customer.viewed', $customer);
@@ -75,20 +81,31 @@ class CustomerController extends Controller
             ->role('executive')
             ->select('id', 'name')
             ->get();
+	
+	$templates = Template::where('is_active', true)
+            ->when(!$user->hasAnyRole(['admin', 'super_admin']), function ($q) use ($user) {
+                $q->where(function ($inner) use ($user) {
+                    $inner->whereHas('assignedUsers', fn($u) => $u->where('user_id', $user->id))
+                        ->orWhereDoesntHave('assignedUsers');
+                });
+            })
+            ->orderBy('name')
+            ->get(['id', 'name', 'body', 'variables', 'category', 'media']);
 
-        return Inertia::render('Customers/Show', [
-            'customer' => $customer->load('assignedTo'),
-            'messages' => $messages,
-            'documents' => $documents,
-            'executives' => $executives,
-        ]);
+            return Inertia::render('Customers/Show', [
+                'customer' => $customer->load('assignedTo'),
+                'messages' => $messages,
+                'documents' => $documents,
+                'executives' => $executives,
+		'templates'  => $templates,
+            ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
             'name' => 'required|string|max:191',
-            'phone' => 'required|string|max:20',
+	    'phone' => 'required|digits:12|regex:/^91[0-9]{10}$/',
             'email' => 'nullable|email|max:191',
             'company' => 'nullable|string|max:191',
             'notes' => 'nullable|string',
@@ -154,9 +171,13 @@ class CustomerController extends Controller
         $perPage = (int) $request->input('per_page', 50);
         $companyId = $request->user()->company_id;
 
-        $customers = Customer::where('company_id', $companyId)
-            ->orderBy('created_at', 'desc')
-            ->paginate($perPage);
+        $user = auth()->user();
+        $query = Customer::where('company_id', $companyId)->orderBy('created_at', 'desc');
+        if ($user->hasRole('executive')) {
+            $query->where('assigned_to', $user->id);
+        }
+
+        $customers = $query->paginate($perPage);
         
         return response()->json($customers);
     }

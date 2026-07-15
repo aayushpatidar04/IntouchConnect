@@ -58,6 +58,23 @@
                                 <td class="px-5 py-3.5 text-right">
                                     <div
                                         class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+					<div class="relative">
+                                            <select 
+                                                @change="onCompanyChange($event, u)"
+                                                class="text-xs rounded-lg border border-surface-200 w-32 px-2 py-1 bg-white text-surface-600 focus:outline-none focus:ring-2 focus:ring-brand-400 cursor-pointer min-w-[120px]"
+                                            >
+                                                <option :value="u.company_id" selected disabled>
+                                                    {{ u.company?.name ?? 'Switch Company' }}
+                                                </option>
+                                                <option 
+                                                    v-for="c in getAvailableCompanies(u.company_id)" 
+                                                    :key="c.id" 
+                                                    :value="c.id"
+                                                >
+                                                    {{ c.name }}
+                                                </option>
+                                            </select>
+                                        </div>
                                         <button @click="editUser(u)"
                                             class="text-xs text-surface-500 hover:text-surface-800">Edit</button>
                                         <button @click="deleteUser(u)"
@@ -134,6 +151,40 @@
                 </div>
             </Transition>
         </Teleport>
+
+	<!-- Company Switch Confirmation Modal -->
+        <Teleport to="body">
+            <Transition name="modal">
+                <div v-if="pendingSwitch" class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="cancelSwitch" />
+                    <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 animate-slide-up">
+                        <h2 class="text-base font-semibold mb-1">Confirm Company Change</h2>
+                        <p class="text-xs text-surface-400 mb-4">
+                            Move <strong>{{ pendingSwitch?.user?.name }}</strong> from 
+                            <em>{{ pendingSwitch?.user?.company?.name }}</em> to 
+                            <em>{{ getCompanyName(pendingSwitch?.newCompanyId) }}</em>?
+                        </p>
+
+                        <div class="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5 mb-4">
+                            <p class="text-xs text-amber-700">
+                                ⚠️ All customers assigned to this user will be migrated to the new company.
+                            </p>
+                        </div>
+
+                        <div class="flex justify-end gap-2">
+                            <button @click="cancelSwitch"
+                                class="px-4 py-2 text-sm text-surface-600 rounded-xl hover:bg-surface-100 transition-colors">
+                                Cancel
+                            </button>
+                            <button @click="confirmSwitch" :disabled="switching"
+                                class="px-5 py-2 bg-brand-500 text-white text-sm font-medium rounded-xl hover:bg-brand-600 disabled:opacity-50">
+                                {{ switching ? 'Moving…' : 'Confirm Move' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
     </AppLayout>
 </template>
 
@@ -143,7 +194,7 @@ import { router } from '@inertiajs/vue3';
 import AppLayout from '@/Components/Layout/AppLayout.vue';
 import { useToast } from '@/Composables/useToast';
 
-const props = defineProps({ users: Object, roles: Array });
+const props = defineProps({ users: Object, roles: Array, switchableCompanies: { type: Array, default: () => [] }, });
 const toast = useToast();
 const showCreate = ref(false);
 const editingUser = ref(null);
@@ -163,10 +214,60 @@ function editUser(u) {
     editingUser.value = u;
 }
 
+// -- Company Switch (inline dropdown + confirmation modal)
+const pendingSwitch = ref(null);
+const switching = ref(false);
+
 function closeModal() {
     showCreate.value = false;
     editingUser.value = null;
     Object.assign(form, { name: '', email: '', password: '', role: 'executive', phone: '', is_active: true });
+}
+
+// Filter out current company from dropdown options
+function getAvailableCompanies(currentCompanyId) {
+    return props.switchableCompanies.filter(c => c.id !== currentCompanyId);
+}
+
+function getCompanyName(companyId) {
+    const company = props.switchableCompanies.find(c => c.id == companyId);
+    return company?.name ?? 'Unknown';
+}
+
+// When dropdown changes, store pending switch and show confirmation modal
+function onCompanyChange(event, user) {
+    const newCompanyId = event.target.value;
+    if (!newCompanyId || newCompanyId == user.company_id) return;
+    
+    pendingSwitch.value = {
+        user: user,
+        newCompanyId: newCompanyId,
+    };
+    
+    // Reset dropdown back to current company
+    event.target.value = user.company_id;
+}
+
+function cancelSwitch() {
+    pendingSwitch.value = null;
+}
+
+function confirmSwitch() {
+    if (!pendingSwitch.value) return;
+    
+    switching.value = true;
+    router.post(route('admin.users.switch-company', pendingSwitch.value.user.id), {
+        company_id: pendingSwitch.value.newCompanyId,
+    }, {
+        onSuccess: () => {
+            toast.success('User moved to new company successfully.');
+            cancelSwitch();
+        },
+        onError: (errors) => {
+            toast.error(errors.error ?? 'Failed to switch company.');
+        },
+        onFinish: () => { switching.value = false; },
+    });
 }
 
 function submitUser() {

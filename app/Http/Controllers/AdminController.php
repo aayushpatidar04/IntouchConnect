@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AuditLog;
 use App\Models\Company;
 use App\Models\User;
+use App\Models\Customer;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -44,12 +45,17 @@ class AdminController extends Controller
         $assignableRoles = $authUser->isSuperAdmin()
             ? Role::whereNotIn('name', ['super_admin'])->get()
             : Role::whereIn('name', ['executive', 'auditor'])->get();
+	
+	$switchableCompanies = $authUser->isSuperAdmin()
+            ? Company::where('is_active', true)->select('id', 'name')->orderBy('name')->get()
+            : $authUser->accessibleCompanies()->where('is_active', true)->select('companies.id', 'companies.name')->orderBy('name')->get();
 
         return Inertia::render('Admin/Users', [
             'users'           => $users,
             'roles' => $assignableRoles,
             'canManageAdmins' => $authUser->isSuperAdmin(),
-        ]);
+	    'switchableCompanies' => $switchableCompanies	        
+	]);
     }
 
     public function storeUser(Request $request): RedirectResponse
@@ -117,6 +123,57 @@ class AdminController extends Controller
         AuditService::log('admin.user_updated', $user);
 
         return back()->with('success', 'User updated.');
+    }
+
+    public function switchUserCompany(Request $request, User $user): RedirectResponse
+    {
+        $authUser = auth()->user();
+
+        if (! $authUser->isSuperAdmin()) {
+            $accessibleIds = $authUser->accessibleCompanies()->pluck('companies.id')->toArray();
+            if (! in_array($user->company_id, $accessibleIds)) {
+                abort(403, 'You cannot manage this user.');
+            }
+        }
+
+        $data = $request->validate([
+            'company_id' => 'required|integer|exists:companies,id',
+        ]);
+
+        $newCompanyId = $data['company_id'];
+
+        // Validate target company access
+        if (! $authUser->isSuperAdmin()) {
+            $accessibleIds = $authUser->accessibleCompanies()->pluck('companies.id')->toArray();
+            if (! in_array($newCompanyId, $accessibleIds)) {
+                abort(403, 'You do not have access to the target company.');
+            }
+        }
+
+        $oldCompanyId = $user->company_id;
+
+        if ($oldCompanyId == $newCompanyId) {
+            return back()->with('info', 'User is already in this company.');
+        }
+
+        // Move all customers assigned to this user to the new company
+        $customerCount = Customer::withoutGlobalScopes()
+            ->where('assigned_to', $user->id)
+            ->count();
+
+        Customer::withoutGlobalScopes()
+            ->where('assigned_to', $user->id)
+            ->update(['company_id' => $newCompanyId]);
+
+        $user->update(['company_id' => $newCompanyId]);
+
+        AuditService::log('user.company_changed', $user, [
+            'old_company_id' => $oldCompanyId,
+            'new_company_id' => $newCompanyId,
+            'customers_migrated' => $customerCount,
+        ], []);
+
+        return back()->with('success', "User moved to new company. {$customerCount} customer(s) migrated.");
     }
 
     public function destroyUser(User $user): RedirectResponse

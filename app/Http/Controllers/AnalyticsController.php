@@ -26,7 +26,7 @@ class AnalyticsController extends Controller
 
         // Message volume by day (only customers of this company)
         $volumeByDay = Message::select(
-            DB::raw("strftime('%Y-%m-%d', created_at) as date"),
+            DB::raw("DATE_FORMAT(created_at, '%Y-%m-%d') as date"),
             DB::raw("SUM(CASE WHEN direction='inbound'  THEN 1 ELSE 0 END) as inbound"),
             DB::raw("SUM(CASE WHEN direction='outbound' THEN 1 ELSE 0 END) as outbound")
         )
@@ -51,27 +51,28 @@ class AnalyticsController extends Controller
 
         // Average response time per executive (SQLite version, scoped by company)
         $responseTime = DB::select("
-        SELECT u.name,
-               ROUND(AVG((julianday(outbound_msg.created_at) - julianday(inbound_msg.created_at)) * 24 * 60), 1) as avg_minutes
-        FROM messages inbound_msg
-        JOIN customers c ON inbound_msg.customer_id = c.id
-        JOIN users u ON c.assigned_to = u.id
-        JOIN messages outbound_msg ON outbound_msg.customer_id = inbound_msg.customer_id
-             AND outbound_msg.direction = 'outbound'
-             AND outbound_msg.created_at > inbound_msg.created_at
-             AND outbound_msg.created_at = (
+          SELECT u.name,
+             ROUND(AVG(TIMESTAMPDIFF(MINUTE, inbound_msg.created_at, outbound_msg.created_at)), 1) as avg_minutes
+          FROM messages inbound_msg
+          JOIN customers c ON inbound_msg.customer_id = c.id
+          JOIN users u ON c.assigned_to = u.id
+          JOIN messages outbound_msg ON outbound_msg.customer_id = inbound_msg.customer_id
+              AND outbound_msg.direction = 'outbound'
+              AND outbound_msg.created_at > inbound_msg.created_at
+              AND outbound_msg.created_at = (
                  SELECT MIN(created_at) FROM messages
                  WHERE customer_id = inbound_msg.customer_id
-                   AND direction = 'outbound'
-                   AND created_at > inbound_msg.created_at
-             )
-        WHERE inbound_msg.direction = 'inbound'
-          AND inbound_msg.created_at BETWEEN ? AND ?
-          AND c.company_id = ?
-        GROUP BY u.id, u.name
-        ORDER BY avg_minutes ASC
-        LIMIT 10
-    ", [$start, $end, $companyId]);
+                    AND direction = 'outbound'
+                    AND created_at > inbound_msg.created_at
+              )
+          WHERE inbound_msg.direction = 'inbound'
+             AND inbound_msg.created_at BETWEEN ? AND ?
+             AND c.company_id = ?
+          GROUP BY u.id, u.name
+          ORDER BY avg_minutes ASC
+          LIMIT 10
+        ", [$start, $end, $companyId]);
+
 
         // Document stats (only documents of this company)
         $documentStats = Document::select('status', DB::raw('COUNT(*) as count'))

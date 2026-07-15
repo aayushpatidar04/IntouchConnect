@@ -17,16 +17,24 @@ class CustomerPolicy
         // Super-admin can view everything
         if ($user->isSuperAdmin()) return true;
 
-        // Must be in the same company
-        if ($user->company_id !== $customer->company_id) return false;
-
         // Company admin and auditor can view all customers in their company
-        if ($user->hasAnyRole(['admin', 'auditor'])) return true;
+        if ($user->hasAnyRole(['admin', 'auditor'])) {
+            return $user->company_id === $customer->company_id;
+        }
 
-        // Executive can only view their assigned customers
-        return $customer->assigned_to === $user->id;
+        // Executive: can view if assigned_to me (same company check)
+        if ($customer->assigned_to === $user->id) {
+            return $user->company_id === $customer->company_id;
+        }
+
+        // Executive: can view if I'm the old owner (any company allowed)
+        if ($customer->old_owner_id === $user->id) {
+            return true;
+        }
+
+        return false;
     }
-
+    
     public function create(User $user): bool
     {
         return $user->hasAnyRole(['super_admin', 'admin', 'executive']);

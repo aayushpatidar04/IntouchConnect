@@ -4,15 +4,21 @@ namespace App\Http\Controllers;
 
 use App\Models\Company;
 use App\Models\Customer;
+use Illuminate\Support\Facades\Http;
 use App\Services\GatewayService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use App\Models\User;
 
 class GatewayController extends Controller
 {
+    private const LEAD_API_URL = 'https://arihantapicore.arihantcapital.com/V1/bitrix24/lead/';
+    private const API_USERNAME = 'Arihant';
+    private const API_PASSWORD = 'Arihant@2021';
+
     public function __construct(private GatewayService $gateway) {}
 
     /**
@@ -198,5 +204,156 @@ class GatewayController extends Controller
             ]);
             return response()->json(['error' => $e->getMessage()], 500);
         }
+    }
+	
+   public function leads(Request $request)
+    {
+        $event = $request->input('event');
+        $leadId = $request->input('data.FIELDS.ID');
+
+        Log::info('Bitrix24 Webhook received', [
+            'event' => $event,
+            'lead_id' => $leadId,
+        ]);
+
+        if (!$leadId) {
+            Log::warning('Bitrix24 Webhook: No Lead ID found.');
+            return response()->json(['error' => 'Missing Lead ID'], 400);
+        }
+
+        // Handle DELETE event
+        if ($event === 'ONCRMLEADDELETE') {
+            return $this->handleLeadDelete($leadId);
+        }
+
+        // Handle ADD and UPDATE events
+        if (in_array($event, ['ONCRMLEADADD', 'ONCRMLEADUPDATE'])) {
+            return $this->handleLeadUpsert($leadId);
+        }
+
+        Log::warning('Bitrix24 Webhook: Unknown event type', ['event' => $event]);
+        return response()->json(['error' => 'Unknown event type'], 400);
+    }
+
+    private function handleLeadUpsert(int $leadId): \Illuminate\Http\JsonResponse
+    {
+        $url = self::LEAD_API_URL . $leadId;
+        
+        $response = Http::withBasicAuth(self::API_USERNAME, self::API_PASSWORD)
+            ->withHeaders(['Accept' => '*/*'])
+            ->get($url);
+
+        if (!$response->successful()) {
+            Log::error("Failed to fetch lead {$leadId} from API", [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            return response()->json(['error' => 'Failed to fetch lead data'], 500);
+        }
+
+        $leadData = $response->json();
+
+        Log::info("Lead {$leadId} fetched from API", $leadData);
+
+        // Validate required fields
+        if (empty($leadData['LeadId']) || empty($leadData['AssignedById'])) {
+            Log::warning("Lead {$leadId} missing required fields", $leadData);
+            return response()->json(['error' => 'Invalid lead data'], 400);
+        }
+
+        // Find the assigned user in our database by Bitrix user ID
+        $assignedUser = User::where('bitrix_user_id', $leadData['AssignedById'])->first();
+
+        if (!$assignedUser) {
+            Log::warning("No user found with bitrix_user_id: {$leadData['AssignedById']} for lead {$leadId}");
+            return response()->json([
+                'status' => 'skipped',
+                'message' => "No matching user found for AssignedById {$leadData['AssignedById']}",
+            ], 200);
+        }
+	
+	$oldOwnerId = null;
+	if (!empty($leadData['Observers'])) {
+	    $oldOwner = User::where('bitrix_user_id', $leadData['Observers'])->first();
+	    $oldOwnerId = $oldOwner ? $oldOwner->id : null;
+	}
+		
+        // Upsert customer
+        $customer = Customer::updateOrCreate(
+            ['phone' => $this->normalizePhone($leadData['Phone'] ?? null)], // Match by email (unique identifier)
+            [
+                'name' => $leadData['Name'] ?? 'Unknown',
+                'email' => $leadData['Email'],
+                'company_id' => $assignedUser->company_id,
+                'assigned_to' => $assignedUser->id,
+                'status' => 'active',
+		'old_owner_id'=> $oldOwnerId,
+                'notes' => "Bitrix24 Lead ID: {$leadData['LeadId']}",
+            ]
+        );
+
+        Log::info("Customer upserted for lead {$leadId}", [
+            'customer_id' => $customer->id,
+            'user_id' => $assignedUser->id,
+            'company_id' => $assignedUser->company_id,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Lead {$leadId} processed successfully",
+            'customer_id' => $customer->id,
+            'action' => $customer->wasRecentlyCreated ? 'created' : 'updated',
+        ]);
+    }
+
+    private function handleLeadDelete(int $leadId): \Illuminate\Http\JsonResponse
+    {
+        // Find customer by Bitrix Lead ID in notes
+        $customer = Customer::where('notes', 'like', "%Bitrix24 Lead ID: {$leadId}%")
+            ->first();
+
+        if (!$customer) {
+            Log::warning("No customer found for deleted lead {$leadId}");
+            return response()->json([
+                'status' => 'skipped',
+                'message' => "No customer found for lead {$leadId}",
+            ], 200);
+        }
+
+        $customer->delete(); // Soft delete
+
+        Log::info("Customer soft-deleted for lead {$leadId}", [
+            'customer_id' => $customer->id,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Lead {$leadId} deleted, customer soft-deleted",
+            'customer_id' => $customer->id,
+        ]);
+    }
+
+    private function normalizePhone(?string $phone): ?string
+    {
+        if (empty($phone)) {
+            return null;
+        }
+
+        $phone = preg_replace('/\D/', '', $phone);
+
+        if (strlen($phone) === 10) {
+            $phone = '91' . $phone;
+	}
+
+	if (!preg_match('/^91\d{10}$/', $phone)) {
+            return null; // or throw an exception if you prefer
+        }
+
+        return $phone;
+    }
+   
+    public function metaResponse(Request $request){
+	\Log::info($request->all());
+	return $request->all();
     }
 }

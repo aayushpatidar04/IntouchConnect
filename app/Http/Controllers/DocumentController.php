@@ -55,6 +55,11 @@ class DocumentController extends Controller
         $data = $request->validate([
             'caption' => 'nullable|string|max:1024',
         ]);
+	
+	$user = auth()->user();
+
+        // Resolve correct session
+        $sessionId = app(\App\Services\MessageRoutingService::class)->resolveOutgoingSession($customer, $user);
 
         // Set company context
         $this->gateway->forAuthUser();
@@ -65,7 +70,7 @@ class DocumentController extends Controller
 
         $message = Message::create([
             'company_id' => auth()->user()->company_id,
-            'session_id' => auth()->user()->company?->session_id,
+            'session_id' => $sessionId,
             'customer_id' => $customer->id,
             'sent_by' => auth()->id(),
             'direction' => 'outbound',

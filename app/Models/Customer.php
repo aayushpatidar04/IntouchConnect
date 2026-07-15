@@ -17,6 +17,7 @@ class Customer extends Model
     protected $fillable = [
         'company_id',
         'assigned_to',
+	'old_owner_id',
         'name',
         'phone',
         'email',
@@ -60,6 +61,11 @@ class Customer extends Model
         return $this->belongsTo(User::class, 'assigned_to');
     }
 
+    public function oldOwner()
+    {
+        return $this->belongsTo(User::class, 'old_owner_id');
+    }
+
     public function messages(): HasMany
     {
         return $this->hasMany(Message::class)->orderBy('created_at');
@@ -92,5 +98,10 @@ class Customer extends Model
     public function getFormattedPhoneAttribute(): string
     {
         return '+' . ltrim($this->phone, '+');
+    }
+
+    public function groups()
+    {
+        return $this->belongsToMany(Group::class, 'customer_group');
     }
 }

@@ -1,31 +1,64 @@
 <template>
   <form @submit.prevent="submit" class="space-y-4">
     <div class="grid grid-cols-2 gap-4">
+      <!-- Name -->
       <div>
         <label class="block text-xs font-medium text-surface-700 mb-1">Name *</label>
-        <input v-model="form.name" type="text" required
-          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+        <input
+          v-model="form.name"
+          type="text"
+          required
+          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+        />
         <p v-if="errors.name" class="text-xs text-red-500 mt-1">{{ errors.name }}</p>
       </div>
-      <div>
+
+      <!-- Phone — visible only when creating -->
+      <div v-if="!isEditing">
         <label class="block text-xs font-medium text-surface-700 mb-1">Phone (WhatsApp) *</label>
-        <input v-model="form.phone" type="text" required placeholder="919876543210"
-          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-400" />
+        <input
+          v-model="form.phone"
+          type="text"
+          required
+          placeholder="919876543210"
+          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-400"
+        />
         <p class="text-[10px] text-surface-400 mt-0.5">E.164 without +</p>
         <p v-if="errors.phone" class="text-xs text-red-500 mt-1">{{ errors.phone }}</p>
       </div>
     </div>
 
-    <div class="grid grid-cols-2 gap-4">
+    <!-- Email — visible only when creating -->
+    <div v-if="!isEditing" class="grid grid-cols-2 gap-4">
       <div>
         <label class="block text-xs font-medium text-surface-700 mb-1">Email</label>
-        <input v-model="form.email" type="email"
-          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+        <input
+          v-model="form.email"
+          type="email"
+          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+        />
+        <p v-if="errors.email" class="text-xs text-red-500 mt-1">{{ errors.email }}</p>
       </div>
+
       <div>
         <label class="block text-xs font-medium text-surface-700 mb-1">Company</label>
-        <input v-model="form.company" type="text"
-          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400" />
+        <input
+          v-model="form.company"
+          type="text"
+          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+        />
+      </div>
+    </div>
+
+    <!-- Company field when editing (since email is hidden) -->
+    <div v-if="isEditing" class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-xs font-medium text-surface-700 mb-1">Company</label>
+        <input
+          v-model="form.company"
+          type="text"
+          class="w-full rounded-xl border border-surface-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400"
+        />
       </div>
     </div>
 
@@ -60,14 +93,14 @@
         class="px-4 py-2 text-sm text-surface-600 hover:text-surface-800 transition-colors">Cancel</button>
       <button type="submit" :disabled="submitting"
         class="px-5 py-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium rounded-xl transition-colors disabled:opacity-50">
-        {{ submitting ? 'Saving…' : (customer ? 'Update' : 'Create') }}
+        {{ submitting ? 'Saving…' : (isEditing ? 'Update' : 'Create') }}
       </button>
     </div>
   </form>
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref, watch, computed } from 'vue';
 import { router } from '@inertiajs/vue3';
 import { useToast } from '@/Composables/useToast';
 
@@ -81,7 +114,8 @@ const { success, error } = useToast();
 const submitting = ref(false);
 const errors     = ref({});
 
-// Build form state from current customer prop
+const isEditing = computed(() => !!props.customer);
+
 function buildForm(c) {
     return {
         name:        c?.name        ?? '',
@@ -89,7 +123,6 @@ function buildForm(c) {
         email:       c?.email       ?? '',
         company:     c?.company     ?? '',
         status:      c?.status      ?? 'active',
-        // Coerce to Number so <select :value="e.id"> (Number) matches
         assigned_to: c?.assigned_to?.id ? Number(c.assigned_to.id) : '',
         notes:       c?.notes       ?? '',
     };
@@ -97,7 +130,6 @@ function buildForm(c) {
 
 const form = reactive(buildForm(props.customer));
 
-// Re-populate whenever the customer prop changes (modal reopened with different record)
 watch(
     () => props.customer,
     (newVal) => {
@@ -112,13 +144,12 @@ function submit() {
     submitting.value = true;
     errors.value = {};
 
-    const isEdit = !!props.customer;
-    const url    = isEdit
+    const url = isEditing.value
         ? route('customers.update', props.customer.id)
         : route('customers.store');
 
-    router[isEdit ? 'patch' : 'post'](url, form, {
-        onSuccess: () => { success(isEdit ? 'Customer updated.' : 'Customer created.'); emit('saved'); },
+    router[isEditing.value ? 'patch' : 'post'](url, form, {
+        onSuccess: () => { success(isEditing.value ? 'Customer updated.' : 'Customer created.'); emit('saved'); },
         onError:   (e) => { errors.value = e; },
         onFinish:  ()  => { submitting.value = false; },
     });

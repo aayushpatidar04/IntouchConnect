@@ -19,12 +19,44 @@
                 </span>
             </div>
 
+	    <!-- Company Switcher -->
+            <div v-if="page.props.accessibleCompanies?.length > 1" class="px-3 py-3 border-b border-surface-800">
+                <div v-if="sidebarOpen" class="space-y-2">
+                    <p class="text-[11px] uppercase tracking-widest text-surface-500 font-medium">
+                        Workspace
+                    </p>
+
+                    <select v-model="selectedCompany" @change="switchCompany"
+                        class="w-full bg-surface-800 border border-surface-700 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                        <option v-for="company in page.props.accessibleCompanies" :key="company.id"
+                            :value="company.id">
+                            {{ company.name }}
+                        </option>
+                    </select>
+                </div>
+
+                <!-- Collapsed Sidebar View -->
+                <div v-else class="flex justify-center">
+                    <button
+                        class="w-10 h-10 rounded-lg bg-surface-800 border border-surface-700 flex items-center justify-center text-xs font-semibold text-white"
+                        :title="'Current Company'">
+                        {{
+                            $page.props.accessibleCompanies.find(
+                                c => c.id == selectedCompany
+                            )?.name?.charAt(0)
+                        }}
+                    </button>
+                </div>
+            </div>
+
             <!-- Nav -->
             <nav class="flex-1 py-4 space-y-1 px-2 overflow-y-auto scrollbar-thin">
                 <NavItem :href="route('dashboard')" :icon="HomeIcon" label="Dashboard" :open="sidebarOpen" />
                 <NavItem :href="route('customers.index')" :icon="UsersIcon" label="Customers" :open="sidebarOpen" />
                 <!-- Templates — admin manages, executive sends -->
                 <NavItem :href="route('templates.index')" :icon="TemplateIcon" label="Templates" :open="sidebarOpen" />
+		<NavItem v-if="isAdmin" :href="route('admin.templates.assignments')" :icon="TemplateIcon" label="Template Access" :open="sidebarOpen" />
+		<NavItem :href="route('groups.index')" :icon="GroupIcon" label="Groups" :open="sidebarOpen" />
                 <!-- Admin section -->
                 <template v-if="isAdmin">
                     <div class="pt-2 pb-1 px-2">
@@ -125,6 +157,7 @@ import ClipboardIcon from '@/Components/Icons/ClipboardIcon.vue';
 import ChevronLeftIcon from '@/Components/Icons/ChevronLeftIcon.vue';
 import ChevronRightIcon from '@/Components/Icons/ChevronRightIcon.vue';
 import TemplateIcon from '@/Components/Icons/TemplateIcon.vue';
+import GroupIcon from '@/Components/Icons/GroupIcon.vue';
 import ChartIcon from '@/Components/Icons/ChartIcon.vue';
 import SignOutIcon from '@/Components/Icons/SignOutIcon.vue';
 
@@ -148,6 +181,7 @@ const { info } = useToast();
 
 const userRoles = computed(() => page.props.auth.user.roles ?? []);
 const userId = computed(() => page.props.auth.user.id);
+const companyId = computed(() => page.props.auth.user.company_id);
 
 const isSuperAdmin = computed(() => userRoles.value.includes('super_admin'));
 const isAdmin = computed(() => userRoles.value.includes('admin'));
@@ -162,7 +196,7 @@ onMounted(() => {
 });
 
 if (isAdmin.value || userRoles.value.includes('auditor')) {
-    useChannel('admin-notifications', {
+    useChannel(`admin-notifications.${companyId.value}`, {
         'new.message': (data) => {
             notifStore.add(data);
             if (data.is_unassigned) info(`📲 New message from unassigned: ${data.customer_name}`);
@@ -209,4 +243,18 @@ const roleLabel = computed(() => {
     const r = userRoles.value[0] ?? '';
     return r ? r.charAt(0).toUpperCase() + r.slice(1) : '';
 });
+
+const selectedCompany = ref(page.props.auth.user.company_id)
+
+const switchCompany = () => {
+    router.post(route('switch-company'), {
+        company_id: selectedCompany.value
+    }, {
+        preserveScroll: true,
+        preserveState: false,
+        onSuccess: () => {
+            window.location.reload()
+        }
+    })
+}
 </script>
