@@ -68,7 +68,7 @@ class GatewayService
             $response = Http::withHeaders($this->headers())
                 ->timeout(5)
                 ->get($url);
-
+	    \Log::info($response);
             return $response->json() ?? [];
         } catch (\Throwable $e) {
             Log::error('Gateway status check failed: ' . $e->getMessage());
@@ -81,10 +81,18 @@ class GatewayService
      */
     public function getCompanyStatus(): array
     {
-        if (!$this->company)
+        if (!$this->company) {
             return ['status' => 'disconnected', 'is_ready' => false];
+        }
+
         $all = $this->getStatus($this->company->session_id);
-        return $all ?: ['status' => 'disconnected', 'is_ready' => false];
+
+        if (empty($all)) {
+            return ['status' => 'disconnected', 'is_ready' => false];
+        }
+
+        // Trust gateway completely — it now does real-time health checks
+        return $all;
     }
 
     public function sendMessage(string $to, string $message, ?int $messageId = null, int $priority = 0): array
@@ -164,23 +172,46 @@ class GatewayService
     public function createSession(string $sessionId): array
     {
         $endpoint = "{$this->baseUrl}/session/create";
-        \Log::info('Gateway createSession request', ['endpoint' => $endpoint, 'sessionId' => $sessionId]);
+    
+        \Log::info('Gateway createSession request', [
+            'endpoint' => $endpoint, 
+            'sessionId' => $sessionId
+        ]);
 
-        $response = Http::withHeaders($this->headers())
-            ->timeout(15)
-            ->post($endpoint, ['sessionId' => $sessionId]);
+        try {
+            $response = Http::withHeaders($this->headers())
+                ->timeout(15)
+                ->post($endpoint, ['sessionId' => $sessionId]);
 
-        \Log::info("Gateway createSession response for sessionId {$sessionId}", ['status' => $response->status(), 'body' => $response->body()]);
-        if (!$response->successful()) {
-            throw new \RuntimeException(sprintf(
-                'Gateway session create failed: status=%s body=%s',
-                $response->status(),
-                $response->body()
-            ));
+            \Log::info("Gateway createSession response", [
+                'sessionId' => $sessionId,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            if (!$response->successful()) {
+                $errorBody = $response->json();
+                $errorMsg = $errorBody['error'] ?? $response->body() ?? 'Unknown error';
+                throw new \RuntimeException("Gateway returned {$response->status()}: {$errorMsg}");
+            }
+
+            return $response->json();
+        
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            \Log::error('Gateway connection failed', [
+                'endpoint' => $endpoint,
+                'error' => $e->getMessage(),
+            ]);
+            throw new \RuntimeException('Cannot connect to WhatsApp gateway. Is it running?');
+        } catch (\Throwable $e) {
+            \Log::error('Gateway request failed', [
+                'endpoint' => $endpoint,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
         }
-
-        return $response->json();
     }
+
 
     public function deleteSession(string $sessionId): bool
     {

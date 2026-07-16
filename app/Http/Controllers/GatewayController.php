@@ -178,11 +178,16 @@ class GatewayController extends Controller
     public function createSession(Request $request): JsonResponse
     {
         if (!auth()->user()->hasRole('admin')) {
-            return response()->json(['error' => 'Forbidden — admins only'], 403);
+            return response()->json(['error' => 'Only admins can connect WhatsApp'], 403);
         }
 
         $companyId = $request->input('company_id', auth()->user()->company_id);
-        $company = Company::findOrFail($companyId);
+    
+        try {
+            $company = Company::findOrFail($companyId);
+        } catch (\Throwable $e) {
+            return response()->json(['error' => 'Company not found'], 404);
+        }
 
         try {
             Log::info('Calling gateway createSession', [
@@ -192,17 +197,27 @@ class GatewayController extends Controller
             ]);
 
             $result = $this->gateway->createSession($company->slug);
+        
             Log::info("Gateway session created for company {$company->slug}", ['result' => $result]);
-            return response()->json(['success' => true, 'result' => $result]);
+        
+            return response()->json([
+                'success' => true, 
+                'result' => $result,
+                'message' => 'WhatsApp session created successfully'
+            ]);
+        
         } catch (\Throwable $e) {
             Log::error('Gateway session create failed', [
                 'company' => $company->slug,
                 'session_id' => $company->slug,
                 'gateway_url' => config('whatsapp.gateway_url'),
                 'message' => $e->getMessage(),
-                'exception' => $e,
+                'trace' => $e->getTraceAsString(),
             ]);
-            return response()->json(['error' => $e->getMessage()], 500);
+        
+            return response()->json([
+                'error' => 'WhatsApp connection failed: ' . $e->getMessage()
+            ], 500);
         }
     }
 	

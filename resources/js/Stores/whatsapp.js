@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import axios from 'axios';
+import { useToast } from '@/Composables/useToast';
 
 export const useWhatsAppStore = defineStore('whatsapp', () => {
+    const { success, error } = useToast();
     const status   = ref('disconnected');
     const qrCode   = ref(null);
     const phone    = ref(null);
@@ -33,12 +35,28 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     async function createSession() {
         loading.value = true;
         try {
-            await axios.post(route('gateway.session.create'));
-            // Fetch updated status after a short delay to let gateway spin up
+            const { data } = await axios.post(route('gateway.session.create'));
+         
+            if (data.success) {
+                if (data.alreadyExists) {
+                    error('Session already exists. Check status below.');
+                } else {
+                    success('WhatsApp session created! Waiting for QR code...');
+                }
+            }
+        
+            // Fetch updated status after a short delay
             await new Promise(r => setTimeout(r, 1500));
             await fetchStatus();
-        } catch (e) {
-            console.error('createSession failed:', e);
+        
+        } catch (err) {
+            const errorMsg = err.response?.data?.error 
+                || err.response?.data?.message 
+                || err.message 
+                || 'Failed to create WhatsApp session';
+        
+            error(errorMsg);
+            console.error('createSession failed:', err);
         } finally {
             loading.value = false;
         }

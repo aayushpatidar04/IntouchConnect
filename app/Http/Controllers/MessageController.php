@@ -25,17 +25,39 @@ class MessageController extends Controller
 
         // Resolve correct session
         $sessionId = app(\App\Services\MessageRoutingService::class)->resolveOutgoingSession($customer, $user);
+	
+	\Log::info('Message send initiated', [
+            'user_id' => $user->id,
+            'customer_id' => $customer->id,
+            'resolved_session_id' => $sessionId,
+            'user_company_id' => $user->company_id,
+            'user_company_session' => $user->company?->session_id,
+        ]);
 
         // Set company context so GatewayService uses the right sessionId
         $this->gateway->forAuthUser();
 
         // Check this company's gateway session is live
         $status = $this->gateway->getCompanyStatus();
+	
+	\Log::info('Gateway status check', [
+            'status' => $status,
+            'company_id' => $user->company_id,
+        ]);
 
-        if (empty($status['is_ready'])) {
-            return response()->json(['error' => 'WhatsApp is not connected for your company.'], 503);
-        }
-
+	if (empty($status['is_ready'])) {
+            $sessionStatus = $status['status'] ?? 'unknown';
+            $errorMsg = match($sessionStatus) {
+                'disconnected' => 'WhatsApp is disconnected. Please reconnect from settings.',
+                'qr_ready' => 'WhatsApp QR code pending. Please scan the QR code.',
+                'connecting' => 'WhatsApp is connecting. Please wait a moment.',
+                'failed' => 'WhatsApp authentication failed. Please reconnect.',
+                'default' => "WhatsApp is not ready (status: {$sessionStatus}). Please check connection.",
+            };
+        
+            return response()->json(['error' => $errorMsg], 503);
+        }	
+            
         $message = Message::create([
             'company_id'  => auth()->user()->company_id,
             'session_id'  => $sessionId,
@@ -47,17 +69,33 @@ class MessageController extends Controller
             'status'      => 'pending',
         ]);
 
-        try {
+	try {
             $result = $this->gateway->sendMessage($customer->phone, $data['body'], $message->id);
-	    \Log::info($result);
+            \Log::info('Gateway sendMessage result', ['result' => $result]);
+         
             $message->update([
                 'status'         => 'queued',
                 'gateway_job_id' => $result['job_id'] ?? null,
-		'whatsapp_message_id' => $result['wa_message_id'] ?? null,
+                'whatsapp_message_id' => $result['wa_message_id'] ?? null,
             ]);
         } catch (\Throwable $e) {
-            $message->update(['status' => 'failed', 'failure_reason' => $e->getMessage()]);
-            return response()->json(['error' => 'Failed to queue message.'], 500);
+            $errorMessage = $e->getMessage();
+            \Log::error('Gateway sendMessage failed', [
+                'message_id' => $message->id,
+                'error' => $errorMessage,
+                'session_id' => $sessionId,
+                'phone' => $customer->phone,
+            ]);
+         
+            $message->update([
+                'status' => 'failed', 
+                'failure_reason' => $errorMessage
+            ]);
+        
+            // Return the ACTUAL error to the UI
+            return response()->json([
+                'error' => 'Message failed: ' . $errorMessage
+            ], 503);
         }
 
         $customer->update(['last_contacted_at' => now()]);
@@ -66,6 +104,7 @@ class MessageController extends Controller
         return response()->json([
             'message' => $message->load('sentBy'),
         ]);
+
     }
 
     public function markRead(Request $request, Customer $customer): JsonResponse

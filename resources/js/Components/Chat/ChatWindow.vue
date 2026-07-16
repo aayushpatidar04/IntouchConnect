@@ -592,9 +592,13 @@ async function sendTextMessage() {
         const idx = messages.value.findIndex(m => m.id === optimistic.id);
         if (idx !== -1) messages.value[idx] = data.message;
         emit('message-sent');
-    } catch {
+    } catch (err){
         messages.value = messages.value.filter(m => m.id !== optimistic.id);
-        toastError('Failed to send message. Check WhatsApp connection.');
+	const errorMsg = err.response?.data?.error 
+            || err.response?.data?.message 
+            || err.message 
+            || 'Failed to send message. Check WhatsApp connection.';
+        toastError(errorMsg);
     } finally {
         sending.value = false;
     }
@@ -631,6 +635,10 @@ async function sendDocument() {
         success('Document sent to customer.');
     } catch (err) {
         messages.value = messages.value.filter(m => m.id !== optimistic.id);
+	const errorMsg = err.response?.data?.error 
+            || err.response?.data?.message 
+            || err.message 
+            || 'Failed to send document.';
         toastError(err.response?.data?.error ?? 'Failed to send document.');
     } finally {
         sending.value = false;
