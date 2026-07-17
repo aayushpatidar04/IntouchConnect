@@ -68,7 +68,7 @@ class GatewayService
             $response = Http::withHeaders($this->headers())
                 ->timeout(5)
                 ->get($url);
-	    \Log::info($response);
+            \Log::info($response);
             return $response->json() ?? [];
         } catch (\Throwable $e) {
             Log::error('Gateway status check failed: ' . $e->getMessage());
@@ -101,7 +101,7 @@ class GatewayService
             throw new \RuntimeException('No company context set on GatewayService.');
         }
 
-	$message_data = Message::findOrFail($messageId);
+        $message_data = Message::findOrFail($messageId);
 
         $response = Http::withHeaders($this->headers())
             ->timeout(10)
@@ -112,7 +112,7 @@ class GatewayService
                 'message_id' => $messageId,
                 'priority' => $priority,
             ]);
-	\Log::info($response->json());
+        \Log::info($response->json());
 
         if (!$response->successful()) {
             throw new \RuntimeException('Gateway send failed: ' . $response->body());
@@ -136,7 +136,7 @@ class GatewayService
         }
 
         $filename = $originalFilename ?: basename($filePath);
-	$message = Message::findOrFail($messageId);
+        $message = Message::findOrFail($messageId);
         $response = Http::withHeaders($this->headers())
             ->timeout(60)
             ->attach('file', file_get_contents($filePath), $filename)
@@ -172,9 +172,9 @@ class GatewayService
     public function createSession(string $sessionId): array
     {
         $endpoint = "{$this->baseUrl}/session/create";
-    
+
         \Log::info('Gateway createSession request', [
-            'endpoint' => $endpoint, 
+            'endpoint' => $endpoint,
             'sessionId' => $sessionId
         ]);
 
@@ -196,7 +196,7 @@ class GatewayService
             }
 
             return $response->json();
-        
+
         } catch (\Illuminate\Http\Client\ConnectionException $e) {
             \Log::error('Gateway connection failed', [
                 'endpoint' => $endpoint,
@@ -272,156 +272,6 @@ class GatewayService
         };
     }
 
-    // ── Inbound message ───────────────────────────────────────────────────────
-
-    // private function handleIncomingMessage(array $data, ?Company $company): void
-    // {
-    //     // ── Deduplicate ───────────────────────────────────────────────────────
-    //     $waMessageId = $data['message_id'] ?? null;
-    //     if ($waMessageId) {
-    //         $exists = Message::withoutGlobalScopes()
-    //             ->where('whatsapp_message_id', $waMessageId)
-    //             ->exists();
-    //         if ($exists) {
-    //             Log::debug("Duplicate WA message ignored: {$waMessageId}");
-    //             return;
-    //         }
-    //     }
-
-    //     // ── Normalise phone ───────────────────────────────────────────────────
-    //     // IMPORTANT: This is the fix for "messages from unknown numbers not arriving".
-    //     // WhatsApp sends numbers in various formats: "919876543210", "91 9876543210",
-    //     // "+91-9876543210" etc. We strip everything except digits.
-    //     $phone = preg_replace('/\D/', '', $data['from'] ?? '');
-
-    //     if (empty($phone)) {
-    //         Log::warning('Incoming message with empty/invalid phone number', $data);
-    //         return;
-    //     }
-
-    //     // ── Find or auto-create customer ──────────────────────────────────────
-    //     // withoutGlobalScopes() so we can search by phone + company_id explicitly
-    //     // without the CompanyScope interfering (no auth context in webhook).
-    //     $customer = Customer::withoutGlobalScopes()
-    //         ->where('phone', $phone)
-    //         ->when($company, fn($q) => $q->where('company_id', $company->id))
-    //         ->first();
-
-    //     if (!$customer) {
-    //         // Auto-create customer from unknown/new number.
-    //         // Assign to a default admin or first executive of the company.
-    //         $defaultAssignee = $company
-    //             ? User::where('company_id', $company->id)
-    //                 ->whereHas('roles', fn($q) => $q->whereIn('name', ['admin', 'executive']))
-    //                 ->orderByRaw("
-    //           CASE name
-    //               WHEN 'admin' THEN 1
-    //               WHEN 'executive' THEN 2
-    //               ELSE 3
-    //           END
-    //       ")
-    //                 ->value('id')
-    //             : null;
-
-
-    //         $customer = Customer::withoutGlobalScopes()->create([
-    //             'company_id' => $company?->id,
-    //             'assigned_to' => $defaultAssignee,
-    //             'name' => 'Unknown (' . $phone . ')',
-    //             'phone' => $phone,
-    //             'status' => 'active',
-    //         ]);
-
-    //         Log::info("Auto-created customer for phone {$phone} in company " . ($company?->id ?? 'unknown'));
-    //     }
-
-    //     // ── Save message ──────────────────────────────────────────────────────
-    //     $sessionId = $data['session_id'] ?? ($this->company?->session_id);
-
-    //     $message = Message::withoutGlobalScopes()->create([
-    //         'company_id' => $company?->id,
-    //         'session_id' => $sessionId,
-    //         'customer_id' => $customer->id,
-    //         'whatsapp_message_id' => $waMessageId,
-    //         'direction' => 'inbound',
-    //         'type' => $data['type'] ?? 'text',
-    //         'body' => $data['body'] ?? '',
-    //         'status' => 'delivered',
-    //         'is_forwarded' => $data['is_forwarded'] ?? false,
-    //         'delivered_at' => now(),
-    //     ]);
-
-    //     $customer->update(['last_contacted_at' => now()]);
-
-    //     // ── Handle media/document attachment ──────────────────────────────────
-    //     if (!empty($data['has_media']) && !empty($data['media'])) {
-    //         try {
-    //             $mediaData = $data['media'];
-
-    //             if (!empty($mediaData['data'])) {
-    //                 // Inline base64 case
-    //                 app(DocumentService::class)->saveFromWhatsApp(
-    //                     customer: $customer,
-    //                     message: $message,
-    //                     mediaData: $mediaData
-    //                 );
-    //             } else {
-    //                 // CRM reference case (large file)
-    //                 $crmUrl = $mediaData['crm_media_url'] ?? '';
-    //                 $relativePath = '';
-
-    //                 if ($crmUrl) {
-    //                     // Strip everything before and including "storage/"
-    //                     $relativePath = preg_replace('#^.+?/storage/#', '', $crmUrl);
-    //                 }
-
-
-    //                 $document = new Document([
-    //                     'customer_id' => $customer->id,
-    //                     'message_id' => $message->id,
-    //                     'stored_filename' => $mediaData['filename'] ?? 'attachment',
-    //                     'original_filename' => $mediaData['filename'] ?? 'attachment',
-    //                     'disk' => 'public',
-    //                     'path' => $relativePath,
-    //                     'mime_type' => $mediaData['mimetype'] ?? 'application/octet-stream',
-    //                     'size' => '> 4MB',
-    //                     'source' => 'whatsapp',
-    //                     'status' => 'pending',
-    //                 ]);
-    //                 $document->save();
-    //             }
-
-    //         } catch (\Throwable $e) {
-    //             Log::error('Failed to save inbound media: ' . $e->getMessage());
-    //             // Don't throw — message was saved, media failure is non-fatal
-    //         }
-    //     }
-
-    //     // ── Broadcast real-time updates (wrapped — never crash the webhook) ───
-    //     $message->load('customer', 'document');
-
-    //     try {
-    //         broadcast(new \App\Events\NewMessageReceived($message));
-    //     } catch (\Throwable $e) {
-    //         Log::warning('NewMessageReceived broadcast failed: ' . $e->getMessage());
-    //     }
-
-    //     try {
-    //         broadcast(new \App\Events\NewInboundMessage($message));
-    //     } catch (\Throwable $e) {
-    //         Log::warning('NewInboundMessage broadcast failed: ' . $e->getMessage());
-    //     }
-
-    //     // ── Audit ─────────────────────────────────────────────────────────────
-    //     AuditLog::create([
-    //         'company_id' => $company?->id,
-    //         'action' => 'message.received',
-    //         'auditable_type' => Message::class,
-    //         'auditable_id' => $message->id,
-    //         'new_values' => ['from' => $phone, 'type' => $message->type],
-    //     ]);
-    // }
-
     private function handleIncomingMessage(array $data, ?Company $company): void
     {
         // ── Deduplicate ───────────────────────────────────────────────────────
@@ -478,10 +328,10 @@ class GatewayService
                 ? app(\App\Services\CustomerAssignmentService::class)
                     ->assignExecutive($company, $isArihant)
                 : null;
-	    
-	     $customerCompanyId = $isArihant
-	            ? $assignedUser?->company_id
-        	    : $company?->id;
+
+            $customerCompanyId = $isArihant
+                ? $assignedUser?->company_id
+                : $company?->id;
 
             $customer = Customer::withoutGlobalScopes()->create([
                 'company_id' => $customerCompanyId,
@@ -498,11 +348,11 @@ class GatewayService
         }
 
         // ── Save Message ─────────────────────────────────────────────────────
-	if($isArihant){
-	    $sessionId = "arihant-special-session";
-	}else{
+        if ($isArihant) {
+            $sessionId = "arihant-special-session";
+        } else {
             $sessionId = $customer->company?->slug;
-	}
+        }
 
         $message = Message::withoutGlobalScopes()->create([
             'company_id' => $customer->company_id,
@@ -644,7 +494,7 @@ class GatewayService
         try {
             broadcast(new \App\Events\MessageStatusUpdated([
                 'message_id' => $messageId,
-                'status'     => 'sent',
+                'status' => 'sent',
             ]));
         } catch (\Throwable $e) {
             Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
@@ -654,12 +504,12 @@ class GatewayService
     private function handleMessageFailed(array $data): void
     {
         $messageId = $data['message_id'] ?? null;
- 
+
         if ($messageId) {
             Message::withoutGlobalScopes()
                 ->where('id', $messageId)
                 ->update([
-                    'status'         => 'failed',
+                    'status' => 'failed',
                     'failure_reason' => $data['error'] ?? 'Unknown',
                 ]);
         }
@@ -667,8 +517,8 @@ class GatewayService
         try {
             broadcast(new \App\Events\MessageStatusUpdated([
                 'message_id' => $messageId,
-                'status'     => 'failed',
-                'error'      => $data['error'] ?? null,
+                'status' => 'failed',
+                'error' => $data['error'] ?? null,
             ]));
         } catch (\Throwable $e) {
             Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
@@ -677,30 +527,30 @@ class GatewayService
 
     private function handleMessageAck(array $data): void
     {
-    	$ack = (int) ($data['ack'] ?? 0);
-    
-    	$status = match ($ack) {
+        $ack = (int) ($data['ack'] ?? 0);
+
+        $status = match ($ack) {
             1 => 'sent',
             2 => 'delivered',
             3 => 'read',
             0 => 'failed',
             default => null,
-    	};
+        };
 
-    	if (!$status) {
+        if (!$status) {
             Log::warning('Unknown ack value received', ['ack' => $ack, 'data' => $data]);
             return;
-    	}
+        }
 
-    	$waMessageId = $data['wa_message_id'] ?? $data['message_id'] ?? null;
-    
-   	if (!$waMessageId) {
+        $waMessageId = $data['wa_message_id'] ?? $data['message_id'] ?? null;
+
+        if (!$waMessageId) {
             Log::warning('Message ack received without message_id', $data);
             return;
         }
 
         $updates = ['status' => $status];
-    
+
         if ($status === 'delivered') {
             $updates['delivered_at'] = now();
         }
@@ -711,32 +561,32 @@ class GatewayService
             $updates['failure_reason'] = $data['reason'] ?? 'Delivery failed';
         }
 
-    // Try to find by wa_message_id first, then fallback to whatsapp_message_id
+        // Try to find by wa_message_id first, then fallback to whatsapp_message_id
         $message = Message::withoutGlobalScopes()
             ->orWhere('whatsapp_message_id', $waMessageId)
             ->first();
 
         if ($message) {
             $message->update($updates);
-        
+
             Log::info("Message {$waMessageId} status updated to {$status}", [
                 'message_id' => $message->id,
                 'customer_id' => $message->customer_id,
             ]);
-    	} else {
+        } else {
             Log::warning("Message not found for ack: {$waMessageId}", $data);
         }
 
-    // Broadcast status update
-    	try {
+        // Broadcast status update
+        try {
             broadcast(new \App\Events\MessageStatusUpdated([
-            	'message_id' => $waMessageId,
-	        'status' => $status,
+                'message_id' => $waMessageId,
+                'status' => $status,
                 'ack' => $ack,
             ]));
-	} catch (\Throwable $e) {
+        } catch (\Throwable $e) {
             Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
-    	}
+        }
     }
 
     // ── Session state handlers ────────────────────────────────────────────────

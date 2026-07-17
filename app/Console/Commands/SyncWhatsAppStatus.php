@@ -8,20 +8,42 @@ use Illuminate\Console\Command;
 
 class SyncWhatsAppStatus extends Command
 {
-    protected $signature   = 'whatsapp:sync-status';
+    protected $signature = 'whatsapp:sync-status';
     protected $description = 'Poll the WhatsApp gateway and update session status in the database.';
 
     public function handle(GatewayService $gateway): int
     {
-        $data = $gateway->getStatus();
+        $sessions = $gateway->getStatus();
 
-        WhatsappSession::create([
-            'status'       => $data['status'] ?? 'disconnected',
-            'phone'        => $data['phone']   ?? null,
-            'connected_at' => ($data['status'] === 'connected') ? now() : null,
-        ]);
+        if (empty($sessions)) {
+            $this->warn('Gateway returned no session data.');
+            return Command::FAILURE;
+        }
 
-        $this->info("WhatsApp status: {$data['status']}");
+        foreach ($sessions as $sessionId => $data) {
+            if (!is_array($data)) {
+                continue;
+            }
+
+            WhatsappSession::upsertForSession($sessionId, [
+                'status' => $data['status'] ?? 'disconnected',
+                'phone' => $data['phone'] ?? null,
+                'qr_code' => $data['qr'] ?? null,
+                'connected_at' =>
+                    ($data['status'] ?? null) === 'connected'
+                    ? now()
+                    : null,
+                'disconnected_at' =>
+                    ($data['status'] ?? null) === 'disconnected'
+                    ? now()
+                    : null,
+            ]);
+
+            $this->line(
+                "{$sessionId}: " .
+                ($data['status'] ?? 'unknown')
+            );
+        }
 
         return Command::SUCCESS;
     }
