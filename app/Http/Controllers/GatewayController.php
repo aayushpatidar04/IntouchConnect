@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\User;
+use App\Services\BitrixLeadService;
 
 class GatewayController extends Controller
 {
@@ -19,7 +20,10 @@ class GatewayController extends Controller
     private const API_USERNAME = 'Arihant';
     private const API_PASSWORD = 'Arihant@2021';
 
-    public function __construct(private GatewayService $gateway) {}
+    public function __construct(
+	private GatewayService $gateway,
+	private readonly BitrixLeadService $bitrixLeadService
+    ) {}
 
     /**
      * Single webhook endpoint for ALL companies.
@@ -250,82 +254,82 @@ class GatewayController extends Controller
         return response()->json(['error' => 'Unknown event type'], 400);
     }
 
-    private function handleLeadUpsert(int $leadId): \Illuminate\Http\JsonResponse
-    {
-        $url = self::LEAD_API_URL . $leadId;
-        
-        $response = Http::withBasicAuth(self::API_USERNAME, self::API_PASSWORD)
-            ->withHeaders(['Accept' => '*/*'])
-            ->get($url);
+    
+    private function handleLeadUpsert(
+        int $leadId
+    ): \Illuminate\Http\JsonResponse {
+        try {
+            $result = $this->bitrixLeadService
+                ->fetchAndSync(
+                    leadId: $leadId,
+                    source: 'webhook'
+                );
 
-        if (!$response->successful()) {
-            Log::error("Failed to fetch lead {$leadId} from API", [
-                'status' => $response->status(),
-                'body' => $response->body(),
+            $customer = $result['customer'];
+
+            return response()->json([
+                'status' => 'success',
+
+                'message' =>
+                    "Lead {$leadId} processed successfully.",
+
+                'customer_id' => $customer->id,
+
+                'action' => $result['action'],
+
+                'assignment_changed' =>
+                    $result['assignment_changed'],
+
+                'company_changed' =>
+                    $result['company_changed'],
             ]);
-            return response()->json(['error' => 'Failed to fetch lead data'], 500);
-        }
+        } catch (ValidationException $e) {
+            Log::warning(
+                'Bitrix webhook lead validation failed',
+                [
+                    'lead_id' => $leadId,
+                    'errors' => $e->errors(),
+                ]
+            );
 
-        $leadData = $response->json();
-
-        Log::info("Lead {$leadId} fetched from API", $leadData);
-
-        // Validate required fields
-        if (empty($leadData['LeadId']) || empty($leadData['AssignedById'])) {
-            Log::warning("Lead {$leadId} missing required fields", $leadData);
-            return response()->json(['error' => 'Invalid lead data'], 400);
-        }
-
-        // Find the assigned user in our database by Bitrix user ID
-        $assignedUser = User::where('bitrix_user_id', $leadData['AssignedById'])->first();
-
-        if (!$assignedUser) {
-            Log::warning("No user found with bitrix_user_id: {$leadData['AssignedById']} for lead {$leadId}");
+        /*
+         * Returning 200 prevents Bitrix from repeatedly retrying
+         * leads that cannot be mapped to a local user.
+         */
             return response()->json([
                 'status' => 'skipped',
-                'message' => "No matching user found for AssignedById {$leadData['AssignedById']}",
-            ], 200);
+                'message' => collect($e->errors())
+                    ->flatten()
+                    ->first(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error(
+                'Bitrix webhook lead synchronization failed',
+                [
+                    'lead_id' => $leadId,
+                    'message' => $e->getMessage(),
+                    'exception' => $e,
+                ]
+            );
+
+            return response()->json([
+                'status' => 'error',
+                'message' =>
+                    'Failed to synchronize lead.',
+            ], 500);
         }
-	
-	$oldOwnerId = null;
-	if (!empty($leadData['Observers'])) {
-	    $oldOwner = User::where('bitrix_user_id', $leadData['Observers'])->first();
-	    $oldOwnerId = $oldOwner ? $oldOwner->id : null;
-	}
-		
-        // Upsert customer
-        $customer = Customer::updateOrCreate(
-            ['phone' => $this->normalizePhone($leadData['Phone'] ?? null)], // Match by email (unique identifier)
-            [
-                'name' => $leadData['Name'] ?? 'Unknown',
-                'email' => $leadData['Email'],
-                'company_id' => $assignedUser->company_id,
-                'assigned_to' => $assignedUser->id,
-                'status' => 'active',
-		'old_owner_id'=> $oldOwnerId,
-                'notes' => "Bitrix24 Lead ID: {$leadData['LeadId']}",
-            ]
-        );
-
-        Log::info("Customer upserted for lead {$leadId}", [
-            'customer_id' => $customer->id,
-            'user_id' => $assignedUser->id,
-            'company_id' => $assignedUser->company_id,
-        ]);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => "Lead {$leadId} processed successfully",
-            'customer_id' => $customer->id,
-            'action' => $customer->wasRecentlyCreated ? 'created' : 'updated',
-        ]);
     }
 
     private function handleLeadDelete(int $leadId): \Illuminate\Http\JsonResponse
     {
         // Find customer by Bitrix Lead ID in notes
-        $customer = Customer::where('notes', 'like', "%Bitrix24 Lead ID: {$leadId}%")
-            ->first();
+	$customer = Customer::query()
+	    ->where('bitrix_lead_id', $leadId)
+	    ->orWhere(
+	        'notes',
+        	'like',
+	        "%Bitrix24 Lead ID: {$leadId}%"
+	    )->first();
 
         if (!$customer) {
             Log::warning("No customer found for deleted lead {$leadId}");

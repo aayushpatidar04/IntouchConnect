@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    'bitrix_leads' => [
+        'url' => env(
+            'BITRIX_LEAD_API_URL',
+            'https://arihantapicore.arihantcapital.com/V1/bitrix24/lead/'
+        ),
+
+        'username' => env('BITRIX_LEAD_API_USERNAME'),
+        'password' => env('BITRIX_LEAD_API_PASSWORD'),
+
+        'timeout' => (int) env(
+            'BITRIX_LEAD_API_TIMEOUT',
+            20
+        ),
+    ],
+
 ];

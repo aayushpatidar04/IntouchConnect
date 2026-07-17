@@ -1,6 +1,18 @@
 <template>
   <AppLayout title="Customers">
     <template #actions>
+      <button
+          type="button"
+          @click="openFetchLeadModal"
+          class="inline-flex items-center gap-2 rounded-lg
+                 border border-blue-200 bg-blue-50 px-4 py-2
+                 text-sm font-medium text-blue-700
+                 hover:bg-blue-100"
+      >
+          <Download class="h-4 w-4" />
+
+          Fetch Bitrix Lead
+      </button>
       <button @click="showCreateModal = true"
         class="flex items-center gap-2 bg-brand-500 hover:bg-brand-600 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors shadow-sm shadow-brand-500/30">
         <span>+</span> New Customer
@@ -124,16 +136,124 @@
         </div>
       </Transition>
     </Teleport>
+
+    <Modal
+        :show="fetchLeadOpen"
+        max-width="md"
+        @close="closeFetchLeadModal"
+    >
+        <form
+            class="p-6"
+            @submit.prevent="fetchBitrixLead"
+        >
+            <div
+                class="mb-5 flex items-start
+                       justify-between gap-4"
+            >
+                <div>
+                    <h2
+                        class="text-lg font-semibold
+                               text-gray-900"
+                    >
+                        Fetch Bitrix Lead
+                    </h2>
+
+                    <p
+                        class="mt-1 text-sm text-gray-500"
+                    >
+                        Enter a Bitrix Lead ID to create or
+                        update the customer.
+                    </p>
+                </div>
+
+                <button
+                    type="button"
+                    class="rounded-lg p-1.5
+                           text-gray-400
+                           hover:bg-gray-100
+                           hover:text-gray-600"
+                    @click="closeFetchLeadModal"
+                >
+                    <X class="h-5 w-5" />
+                </button>
+            </div>
+
+            <div>
+               <InputLabel
+                    for="bitrix-lead-id"
+                    value="Bitrix Lead ID"
+               />
+ 
+                <TextInput
+                    id="bitrix-lead-id"
+                    v-model="fetchLeadForm.lead_id"
+                    type="number"
+                    min="1"
+                    inputmode="numeric"
+                    class="mt-1 block w-full"
+                    placeholder="For example: 199103"
+                    autofocus
+               />
+ 
+                <InputError
+                    class="mt-2"
+                    :message="fetchLeadForm.errors.lead_id"
+                />
+            </div>
+
+            <div
+                class="mt-6 flex justify-end gap-3"
+            >
+                <button
+                    type="button"
+                    class="rounded-lg border
+                          border-gray-300 px-4 py-2
+                          text-sm font-medium
+                          text-gray-700
+                          hover:bg-gray-50"
+                    :disabled="fetchLeadForm.processing"
+                    @click="closeFetchLeadModal"
+                >
+                    Cancel
+                </button>
+
+                <PrimaryButton
+                    type="submit"
+                    :disabled="
+                        fetchLeadForm.processing ||
+                        !fetchLeadForm.lead_id
+                    "
+                >
+                    <Download class="mr-2 h-4 w-4" />
+
+                    {{
+                        fetchLeadForm.processing
+                            ? 'Fetching...'
+                            : 'Fetch Lead'
+                    }}
+                </PrimaryButton>
+            </div>
+        </form>
+    </Modal>
   </AppLayout>
 </template>
 
 <script setup>
 import { ref, reactive } from 'vue';
-import { Link, router } from '@inertiajs/vue3';
+import { Link, router, useForm } from '@inertiajs/vue3';
 import AppLayout from '@/Components/Layout/AppLayout.vue';
 import CustomerForm from '@/Components/UI/CustomerForm.vue';
 import { formatDistanceToNow } from 'date-fns';
 import { useDebounceFn } from '@vueuse/core';
+import Modal from '@/Components/Modal.vue';
+import InputLabel from '@/Components/InputLabel.vue';
+import TextInput from '@/Components/TextInput.vue';
+import InputError from '@/Components/InputError.vue';
+import PrimaryButton from '@/Components/PrimaryButton.vue';
+import {
+    Download,
+    X,
+} from 'lucide-vue-next';
 
 const props = defineProps({
   customers: { type: Object, required: true },
@@ -156,6 +276,44 @@ function statusClass(s) {
 function timeAgo(ts) {
   return formatDistanceToNow(new Date(ts), { addSuffix: true });
 }
+
+const fetchLeadOpen = ref(false);
+
+const fetchLeadForm = useForm({
+    lead_id: '',
+});
+
+const openFetchLeadModal = () => {
+    fetchLeadForm.clearErrors();
+    fetchLeadForm.reset();
+
+    fetchLeadOpen.value = true;
+};
+
+const closeFetchLeadModal = () => {
+    if (fetchLeadForm.processing) {
+        return;
+    }
+
+    fetchLeadOpen.value = false;
+
+    fetchLeadForm.clearErrors();
+    fetchLeadForm.reset();
+};
+
+const fetchBitrixLead = () => {
+    fetchLeadForm.post(
+        route('customers.fetch-bitrix-lead'),
+        {
+            preserveScroll: true,
+
+            onSuccess: () => {
+                closeFetchLeadModal();
+            },
+        }
+    );
+};
+
 </script>
 
 <style scoped>

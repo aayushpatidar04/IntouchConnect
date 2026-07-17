@@ -2,12 +2,15 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\BitrixLeadService;
 use App\Models\Customer;
 use App\Models\Template;
 use App\Models\User;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -180,6 +183,75 @@ class CustomerController extends Controller
         $customers = $query->paginate($perPage);
         
         return response()->json($customers);
+    }
+
+    public function fetchBitrixLead(
+        Request $request,
+        BitrixLeadService $bitrixLeadService
+    ): RedirectResponse {
+
+        $validated = $request->validate([
+            'lead_id' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
+        ]);
+
+        try {
+            $result = $bitrixLeadService
+                ->fetchAndSync(
+                    leadId: (int) $validated['lead_id'],
+                    source: 'manual'
+                );
+
+        /** @var \App\Models\Customer $customer */
+            $customer = $result['customer'];
+
+            $message = $result['action'] === 'created'
+                ? "Lead {$validated['lead_id']} was fetched and customer {$customer->name} was created."
+                : "Lead {$validated['lead_id']} was fetched and customer {$customer->name} was updated.";
+
+            if ($result['assignment_changed']) {
+                $message .= ' Assigned user was updated.';
+            }
+
+            if ($result['company_changed']) {
+                $message .= ' Customer company was also updated.';
+            }
+
+            return back()->with(
+                'success',
+                $message
+            );
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Illuminate\Http\Client\RequestException $e) {
+            Log::error('Manual Bitrix lead fetch failed', [
+                'lead_id' => $validated['lead_id'],
+                'status' =>
+                    $e->response?->status(),
+                'message' => $e->getMessage(),
+            ]);
+
+            return back()->withErrors([
+                'lead_id' =>
+                    'Unable to fetch this lead from Bitrix. Please verify the Lead ID and try again.',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Manual Bitrix lead sync failed', [
+                'lead_id' => $validated['lead_id'],
+                'user_id' => $request->user()->id,
+                'message' => $e->getMessage(),
+                'exception' => $e,
+            ]);
+
+            return back()->withErrors([
+                'lead_id' =>
+                    'The lead could not be synchronized: ' .
+                    $e->getMessage(),
+            ]);
+        }
     }
 
 }

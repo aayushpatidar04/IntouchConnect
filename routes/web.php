@@ -27,7 +27,7 @@ Route::middleware(['auth', 'verified', 'company.active'])->group(function () {
 
     // ── Customers ─────────────────────────────────────────────────────────────
     Route::resource('customers', CustomerController::class)->except(['edit', 'create']);
-
+    Route::post('/customers/fetch-bitrix-lead', [CustomerController::class, 'fetchBitrixLead'])->name('customers.fetch-bitrix-lead');
     Route::get('customers-list', [CustomerController::class, 'list'])->name('customers.list');
     Route::get('groups-list', [GroupController::class, 'list'])->name('groups.list');
 

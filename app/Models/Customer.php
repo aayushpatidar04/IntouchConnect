@@ -26,6 +26,10 @@ class Customer extends Model
         'status',
         'tags',
         'last_contacted_at',
+	'bitrix_lead_id',
+    	'bitrix_assigned_by_id',
+    	'bitrix_created_at',
+    	'bitrix_synced_at',
     ];
 
     protected function casts(): array
@@ -33,6 +37,8 @@ class Customer extends Model
         return [
             'tags'              => 'array',
             'last_contacted_at' => 'datetime',
+	    'bitrix_created_at' => 'datetime',
+	    'bitrix_synced_at' => 'datetime',
         ];
     }
 

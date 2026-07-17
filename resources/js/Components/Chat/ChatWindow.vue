@@ -509,8 +509,8 @@ async function handleFileSelect(e) {
     if (!file) return;
     e.target.value = '';
 
-    if (file.size > 10 * 1024 * 1024) {
-        toastError('File too large. Maximum size is 10 MB.');
+    if (file.size > 50 * 1024 * 1024) {
+        toastError('File too large. Maximum size is 50 MB.');
         return;
     }
 
