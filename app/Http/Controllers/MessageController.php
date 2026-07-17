@@ -11,7 +11,9 @@ use Illuminate\Http\Request;
 
 class MessageController extends Controller
 {
-    public function __construct(private GatewayService $gateway) {}
+    public function __construct(private GatewayService $gateway)
+    {
+    }
 
     public function send(Request $request, Customer $customer): JsonResponse
     {
@@ -21,12 +23,12 @@ class MessageController extends Controller
             'body' => 'required|string|max:4096',
         ]);
 
-	$user = auth()->user();
+        $user = auth()->user();
 
         // Resolve correct session
         $sessionId = app(\App\Services\MessageRoutingService::class)->resolveOutgoingSession($customer, $user);
-	
-	\Log::info('Message send initiated', [
+
+        \Log::info('Message send initiated', [
             'user_id' => $user->id,
             'customer_id' => $customer->id,
             'resolved_session_id' => $sessionId,
@@ -39,45 +41,61 @@ class MessageController extends Controller
 
         // Check this company's gateway session is live
         $status = $this->gateway->getCompanyStatus();
-	
-	\Log::info('Gateway status check', [
+
+        \Log::info('Gateway status check', [
             'status' => $status,
             'company_id' => $user->company_id,
         ]);
 
-	if (empty($status['is_ready'])) {
+        if (empty($status['is_ready'])) {
             $sessionStatus = $status['status'] ?? 'unknown';
-            $errorMsg = match($sessionStatus) {
+            $errorMsg = match ($sessionStatus) {
                 'disconnected' => 'WhatsApp is disconnected. Please reconnect from settings.',
                 'qr_ready' => 'WhatsApp QR code pending. Please scan the QR code.',
                 'connecting' => 'WhatsApp is connecting. Please wait a moment.',
                 'failed' => 'WhatsApp authentication failed. Please reconnect.',
                 'default' => "WhatsApp is not ready (status: {$sessionStatus}). Please check connection.",
             };
-        
+
             return response()->json(['error' => $errorMsg], 503);
-        }	
-            
+        }
+
         $message = Message::create([
-            'company_id'  => auth()->user()->company_id,
-            'session_id'  => $sessionId,
+            'company_id' => auth()->user()->company_id,
+            'session_id' => $sessionId,
             'customer_id' => $customer->id,
-            'sent_by'     => auth()->id(),
-            'direction'   => 'outbound',
-            'type'        => 'text',
-            'body'        => $data['body'],
-            'status'      => 'pending',
+            'sent_by' => auth()->id(),
+            'direction' => 'outbound',
+            'type' => 'text',
+            'body' => $data['body'],
+            'status' => 'pending',
         ]);
 
-	try {
+        try {
             $result = $this->gateway->sendMessage($customer->phone, $data['body'], $message->id);
             \Log::info('Gateway sendMessage result', ['result' => $result]);
-         
-            $message->update([
-                'status'         => 'queued',
-                'gateway_job_id' => $result['job_id'] ?? null,
-                'whatsapp_message_id' => $result['wa_message_id'] ?? null,
-            ]);
+
+            $message->refresh();
+
+            $updateData = [
+                'gateway_job_id' =>
+                    $result['job_id'] ?? null,
+
+                'whatsapp_message_id' =>
+                    $result['wa_message_id'] ?? null,
+            ];
+
+            if (
+                in_array(
+                    $message->status,
+                    ['pending', 'queued'],
+                    true
+                )
+            ) {
+                $updateData['status'] = 'queued';
+            }
+
+            $message->update($updateData);
         } catch (\Throwable $e) {
             $errorMessage = $e->getMessage();
             \Log::error('Gateway sendMessage failed', [
@@ -86,12 +104,12 @@ class MessageController extends Controller
                 'session_id' => $sessionId,
                 'phone' => $customer->phone,
             ]);
-         
+
             $message->update([
-                'status' => 'failed', 
+                'status' => 'failed',
                 'failure_reason' => $errorMessage
             ]);
-        
+
             // Return the ACTUAL error to the UI
             return response()->json([
                 'error' => 'Message failed: ' . $errorMessage

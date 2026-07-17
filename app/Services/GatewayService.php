@@ -527,65 +527,211 @@ class GatewayService
 
     private function handleMessageAck(array $data): void
     {
-        $ack = (int) ($data['ack'] ?? 0);
+        $ack = (int) ($data['ack'] ?? -1);
 
-        $status = match ($ack) {
+        $incomingStatus = match ($ack) {
+            0 => 'failed',
             1 => 'sent',
             2 => 'delivered',
             3 => 'read',
-            0 => 'failed',
             default => null,
         };
 
-        if (!$status) {
-            Log::warning('Unknown ack value received', ['ack' => $ack, 'data' => $data]);
+        if (!$incomingStatus) {
+            Log::warning('Unknown message ACK received', [
+                'ack' => $ack,
+                'data' => $data,
+            ]);
+
             return;
         }
 
-        $waMessageId = $data['wa_message_id'] ?? $data['message_id'] ?? null;
+        $localMessageId = $data['message_id'] ?? null;
+        $waMessageId = $data['wa_message_id'] ?? null;
 
-        if (!$waMessageId) {
-            Log::warning('Message ack received without message_id', $data);
+        if (!$localMessageId && !$waMessageId) {
+            Log::warning(
+                'Message ACK received without identifiers',
+                ['data' => $data]
+            );
+
             return;
         }
 
-        $updates = ['status' => $status];
-
-        if ($status === 'delivered') {
-            $updates['delivered_at'] = now();
-        }
-        if ($status === 'read') {
-            $updates['read_at'] = now();
-        }
-        if ($status === 'failed') {
-            $updates['failure_reason'] = $data['reason'] ?? 'Delivery failed';
-        }
-
-        // Try to find by wa_message_id first, then fallback to whatsapp_message_id
+        /*
+         * Prefer the local database ID because it is unambiguous.
+         * Fall back to the WhatsApp message ID.
+         */
         $message = Message::withoutGlobalScopes()
-            ->orWhere('whatsapp_message_id', $waMessageId)
+            ->when(
+                $localMessageId,
+                fn($query) => $query->where('id', $localMessageId)
+            )
+            ->when(
+                !$localMessageId && $waMessageId,
+                fn($query) => $query->where(
+                    'whatsapp_message_id',
+                    $waMessageId
+                )
+            )
             ->first();
 
-        if ($message) {
-            $message->update($updates);
-
-            Log::info("Message {$waMessageId} status updated to {$status}", [
-                'message_id' => $message->id,
-                'customer_id' => $message->customer_id,
+        if (!$message) {
+            Log::warning('Message not found for ACK', [
+                'local_message_id' => $localMessageId,
+                'wa_message_id' => $waMessageId,
+                'ack' => $ack,
+                'data' => $data,
             ]);
-        } else {
-            Log::warning("Message not found for ack: {$waMessageId}", $data);
+
+            return;
         }
 
-        // Broadcast status update
+        $currentStatus = $message->status;
+
+        /*
+         * Status progression:
+         *
+         * pending → queued → sent → delivered → read
+         */
+        $statusRanks = [
+            'pending' => 0,
+            'queued' => 1,
+            'sent' => 2,
+            'delivered' => 3,
+            'read' => 4,
+        ];
+
+        $currentRank = $statusRanks[$currentStatus] ?? 0;
+        $incomingRank = $statusRanks[$incomingStatus] ?? 0;
+
+        /*
+         * A timeout or delayed error must never replace a confirmed
+         * delivered/read state.
+         */
+        if (
+            $incomingStatus === 'failed' &&
+            in_array(
+                $currentStatus,
+                ['delivered', 'read'],
+                true
+            )
+        ) {
+            Log::warning(
+                'Ignored stale failure ACK for successful message',
+                [
+                    'message_id' => $message->id,
+                    'wa_message_id' => $waMessageId,
+                    'current_status' => $currentStatus,
+                    'incoming_status' => $incomingStatus,
+                    'reason' => $data['reason'] ?? null,
+                ]
+            );
+
+            return;
+        }
+
+        /*
+         * Ignore normal regressions such as:
+         *
+         * read → delivered
+         * delivered → sent
+         */
+        if (
+            $incomingStatus !== 'failed' &&
+            $incomingRank < $currentRank
+        ) {
+            Log::debug('Ignored regressive message ACK', [
+                'message_id' => $message->id,
+                'current_status' => $currentStatus,
+                'incoming_status' => $incomingStatus,
+            ]);
+
+            return;
+        }
+
+        $updates = [
+            'status' => $incomingStatus,
+        ];
+
+        if (
+            $waMessageId &&
+            empty($message->whatsapp_message_id)
+        ) {
+            $updates['whatsapp_message_id'] = $waMessageId;
+        }
+
+        if (
+            $incomingStatus === 'sent' &&
+            empty($message->sent_at)
+        ) {
+            $updates['sent_at'] = now();
+        }
+
+        if (
+            $incomingStatus === 'delivered' &&
+            empty($message->delivered_at)
+        ) {
+            $updates['delivered_at'] = now();
+        }
+
+        if (
+            $incomingStatus === 'read' &&
+            empty($message->read_at)
+        ) {
+            $updates['read_at'] = now();
+
+            if (empty($message->delivered_at)) {
+                $updates['delivered_at'] = now();
+            }
+        }
+
+        if ($incomingStatus === 'failed') {
+            $updates['failure_reason'] =
+                $data['reason']
+                ?? $data['error']
+                ?? 'Delivery failed';
+        } else {
+            /*
+             * Clear an earlier temporary error after receiving a
+             * successful ACK.
+             */
+            $updates['failure_reason'] = null;
+        }
+
+        $message->update($updates);
+
+        Log::info('Message ACK processed', [
+            'message_id' => $message->id,
+            'wa_message_id' =>
+                $waMessageId
+                ?? $message->whatsapp_message_id,
+            'old_status' => $currentStatus,
+            'new_status' => $incomingStatus,
+            'ack' => $ack,
+            'source' => $data['source'] ?? null,
+        ]);
+
         try {
-            broadcast(new \App\Events\MessageStatusUpdated([
-                'message_id' => $waMessageId,
-                'status' => $status,
-                'ack' => $ack,
-            ]));
+            broadcast(
+                new \App\Events\MessageStatusUpdated([
+                    /*
+                     * The frontend most likely identifies the message
+                     * using the local database ID.
+                     */
+                    'message_id' => $message->id,
+                    'wa_message_id' =>
+                        $waMessageId
+                        ?? $message->whatsapp_message_id,
+                    'status' => $incomingStatus,
+                    'ack' => $ack,
+                ])
+            );
         } catch (\Throwable $e) {
-            Log::warning('MessageStatusUpdated broadcast failed: ' . $e->getMessage());
+            Log::warning(
+                'MessageStatusUpdated broadcast failed: ' .
+                $e->getMessage()
+            );
         }
     }
 
