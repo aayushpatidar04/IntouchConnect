@@ -308,8 +308,12 @@ class GatewayService
         $isArihant = strtolower(trim($company?->name ?? '')) === 'arihant_special_session';
 
         // ── Customer Lookup ──────────────────────────────────────────────────
-        $customerQuery = Customer::with('company')->withoutGlobalScopes()
-            ->where('phone', $phone);
+	$customerQuery = Customer::withoutGlobalScopes()
+	    ->with([
+        	'companyData' => function ($query) {
+            	$query->withoutGlobalScopes();
+       	     },
+    	])->where('phone', $phone);
 
         // Normal companies → scoped lookup
         // if (!$isArihant && $company) {
@@ -351,9 +355,8 @@ class GatewayService
         if ($isArihant) {
             $sessionId = "arihant-special-session";
         } else {
-            $sessionId = $customer->company?->slug;
+            $sessionId = $company?->slug;
         }
-
         $message = Message::withoutGlobalScopes()->create([
             'company_id' => $customer->company_id,
             'session_id' => $sessionId,
@@ -373,63 +376,117 @@ class GatewayService
         ]);
 
         // ── Handle Media/Documents ───────────────────────────────────────────
-        if (!empty($data['has_media']) && !empty($data['media'])) {
-
+	\Log::info($data);
+	if (!empty($data['has_media']) && !empty($data['media'])) {
             try {
-
                 $mediaData = $data['media'];
 
-                // Inline base64
-                if (!empty($mediaData['data'])) {
+                Log::info('Processing inbound WhatsApp media', [
+                    'message_id' => $message->id,
+                    'customer_id' => $customer->id,
+                    'filename' => $mediaData['filename'] ?? null,
+                    'mimetype' => $mediaData['mimetype'] ?? null,
+                    'size_bytes' => $mediaData['size_bytes'] ?? null,
+                    'has_inline_data' => !empty($mediaData['data']),
+                    'crm_media_url' => $mediaData['crm_media_url'] ?? null,
+                ]);
 
-                    app(DocumentService::class)->saveFromWhatsApp(
+                // Inline base64 media
+                if (!empty($mediaData['data'])) {
+                    $document = app(DocumentService::class)->saveFromWhatsApp(
                         customer: $customer,
                         message: $message,
                         mediaData: $mediaData
                     );
+
+                    Log::info('Inbound inline media saved', [
+                        'document_id' => $document?->id,
+                        'message_id' => $message->id,
+                    ]);
                 }
 
-                // Large CRM file
-                else {
+                // Large media already uploaded by gateway
+                elseif (!empty($mediaData['crm_media_url'])) {
+                    $crmUrl = $mediaData['crm_media_url'];
 
-                    $crmUrl = $mediaData['crm_media_url'] ?? '';
+                    $urlPath = parse_url($crmUrl, PHP_URL_PATH);
 
-                    $relativePath = '';
-
-                    if ($crmUrl) {
-
-                        $relativePath = preg_replace(
-                            '#^.+?/storage/#',
-                            '',
-                            $crmUrl
+                    if (!$urlPath) {
+                        throw new \RuntimeException(
+                            'Invalid CRM media URL: ' . $crmUrl
                         );
                     }
 
-                    $document = new Document([
+                    $relativePath = ltrim($urlPath, '/');
+
+                    if (str_starts_with($relativePath, 'storage/')) {
+                        $relativePath = substr(
+                            $relativePath,
+                            strlen('storage/')
+                        );
+                    }
+
+                    if (empty($relativePath)) {
+                        throw new \RuntimeException(
+                            'Could not resolve media path from CRM URL'
+                        );
+                    }
+
+                    $document = Document::withoutGlobalScopes()->create([
+                        'company_id' => $customer->company_id,
                         'customer_id' => $customer->id,
                         'message_id' => $message->id,
+
                         'stored_filename' =>
-                            $mediaData['filename'] ?? 'attachment',
+                            $mediaData['stored_filename']
+                            ?? basename($relativePath),
+
                         'original_filename' =>
-                            $mediaData['filename'] ?? 'attachment',
+                            $mediaData['filename']
+                            ?? basename($relativePath),
+
                         'disk' => 'public',
                         'path' => $relativePath,
+
                         'mime_type' =>
                             $mediaData['mimetype']
                             ?? 'application/octet-stream',
-                        'size' => '> 4MB',
+
+                        'size' => (int) (
+                            $mediaData['size_bytes']
+                            ?? $mediaData['size']
+                            ?? 0
+                        ),
+
                         'source' => 'whatsapp',
-                        'status' => 'pending',
+                        'status' => 'completed',
                     ]);
 
-                    $document->save();
+                    Log::info('Inbound large media document created', [
+                        'document_id' => $document->id,
+                        'message_id' => $message->id,
+                        'path' => $document->path,
+                    ]);
                 }
 
+                // Media metadata is incomplete
+                else {
+                    Log::warning('Inbound media payload has no usable content', [
+                        'message_id' => $message->id,
+                        'customer_id' => $customer->id,
+                        'media' => $mediaData,
+                    ]);
+                }
             } catch (\Throwable $e) {
-
-                Log::error(
-                    'Failed to save inbound media: ' . $e->getMessage()
-                );
+                Log::error('Failed to save inbound media', [
+                    'message_id' => $message->id ?? null,
+                    'customer_id' => $customer->id ?? null,
+                    'error' => $e->getMessage(),
+                    'exception' => get_class($e),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'media' => $data['media'] ?? null,
+                ]);
             }
         }
 

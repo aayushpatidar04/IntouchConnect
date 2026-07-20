@@ -1,12 +1,9 @@
 <?php
-// app/Events/NewInboundMessage.php
-// NEW FILE — fires when an inbound WhatsApp message arrives.
-// Notifies: admin channel always + assigned executive's private channel.
-// Separate from NewMessageReceived to carry richer notification payload.
 
 namespace App\Events;
 
 use App\Models\Message;
+use App\Models\Company;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -15,27 +12,131 @@ use Illuminate\Queue\SerializesModels;
 
 class NewInboundMessage implements ShouldBroadcastNow
 {
-    use Dispatchable, InteractsWithSockets, SerializesModels;
+    use Dispatchable;
+    use InteractsWithSockets;
+    use SerializesModels;
 
-    public function __construct(public Message $message) {}
+    public function __construct(
+        public Message $message
+    ) {
+        $this->message->loadMissing([
+            'customer.assignedTo:id,name,company_id',
+            'customer.oldOwner:id,name,company_id',
+            'document',
+        ]);
+    }
 
     public function broadcastOn(): array
-    {
-        $channels = [];
+{
+    $channels = [];
 
-        // Always broadcast to the admin notification channel
-	$channels[] = new Channel(
-            'admin-notifications.' . $this->message->company_id
-        );
+    $customer = $this->message->customer;
 
-        // Also broadcast to the assigned executive's channel if there is one
-        $assignedTo = $this->message->customer->assigned_to ?? null;
-        if ($assignedTo) {
-            $channels[] = new Channel("executive-notifications.{$assignedTo}");
+    if (!$customer) {
+        return $channels;
+    }
+
+    $customer->loadMissing([
+        'assignedTo:id,company_id',
+        'oldOwner:id,company_id',
+    ]);
+
+    $sessionId = $this->message->session_id;
+
+    /*
+     * Arihant special session:
+     *
+     * Notification ownership follows the assigned executive,
+     * not the company that owns the shared WhatsApp session.
+     */
+    if ($sessionId === 'arihant-special-session') {
+        $assignedExecutive = $customer->assignedTo;
+
+        if (!$assignedExecutive) {
+            return $channels;
+        }
+
+        $assignedExecutiveId =
+            (int) $assignedExecutive->id;
+
+        $assignedCompanyId =
+            (int) $assignedExecutive->company_id;
+
+        if ($assignedCompanyId > 0) {
+            $channels[] = new Channel(
+                "admin-notifications.{$assignedCompanyId}"
+            );
+        }
+
+        if ($assignedExecutiveId > 0) {
+            $channels[] = new Channel(
+                "executive-notifications.{$assignedExecutiveId}"
+            );
         }
 
         return $channels;
     }
+
+    /*
+     * Normal sessions:
+     *
+     * Notification ownership follows the company whose WhatsApp
+     * session received the message.
+     */
+    $receivingCompanyId = (int) Company::where(
+        'slug',
+        $sessionId
+    )->value('id');
+
+    /*
+     * Fallback in case the company slug cannot be resolved.
+     */
+    if ($receivingCompanyId <= 0) {
+        $receivingCompanyId =
+            (int) $this->message->company_id;
+    }
+
+    if ($receivingCompanyId > 0) {
+        $channels[] = new Channel(
+            "admin-notifications.{$receivingCompanyId}"
+        );
+    }
+
+    $recipientExecutiveId = null;
+
+    /*
+     * Current owner received the message.
+     */
+    if (
+        $customer->assignedTo &&
+        (int) $customer->assignedTo->company_id ===
+            $receivingCompanyId
+    ) {
+        $recipientExecutiveId =
+            (int) $customer->assignedTo->id;
+    }
+
+    /*
+     * Customer was transferred but message arrived on
+     * the old owner's company session.
+     */
+    elseif (
+        $customer->oldOwner &&
+        (int) $customer->oldOwner->company_id ===
+            $receivingCompanyId
+    ) {
+        $recipientExecutiveId =
+            (int) $customer->oldOwner->id;
+    }
+
+    if ($recipientExecutiveId) {
+        $channels[] = new Channel(
+            "executive-notifications.{$recipientExecutiveId}"
+        );
+    }
+
+    return $channels;
+}
 
     public function broadcastAs(): string
     {
@@ -44,20 +145,76 @@ class NewInboundMessage implements ShouldBroadcastNow
 
     public function broadcastWith(): array
     {
-        $msg      = $this->message;
-        $customer = $msg->customer;
+        $message = $this->message;
+        $customer = $message->customer;
+
+        $recipientExecutiveId =
+            $this->resolveRecipientExecutiveId();
 
         return [
-            'message_id'    => $msg->id,
-            'customer_id'   => $customer->id,
+            'message_id' => $message->id,
+            'customer_id' => $customer->id,
             'customer_name' => $customer->name,
-            'customer_phone'=> $customer->phone,
-            'body'          => $msg->body ?: ($msg->type !== 'text' ? "[{$msg->type}]" : ''),
-            'type'          => $msg->type,
-            'has_document'  => $msg->document !== null,
-            'assigned_to'   => $customer->assigned_to,
-            'is_unassigned' => $customer->assigned_to === null,
-            'created_at'    => $msg->created_at->toISOString(),
+            'customer_phone' => $customer->phone,
+
+            'body' => $message->body ?: (
+                $message->type !== 'text'
+                    ? "[{$message->type}]"
+                    : ''
+            ),
+
+            'type' => $message->type,
+            'has_document' => $message->document !== null,
+
+            /*
+             * This should represent the actual notification
+             * recipient—not always customer.assigned_to.
+             */
+            'recipient_executive_id' =>
+                $recipientExecutiveId,
+
+            'assigned_to' =>
+                $customer->assigned_to,
+
+            'old_owner_id' =>
+                $customer->old_owner_id,
+
+            'receiving_company_id' =>
+                $message->company_id,
+
+            'session_id' =>
+                $message->session_id,
+
+            'is_unassigned' =>
+                $recipientExecutiveId === null,
+
+            'created_at' =>
+                $message->created_at->toISOString(),
         ];
+    }
+
+    private function resolveRecipientExecutiveId(): ?int
+    {
+        $customer = $this->message->customer;
+        $receivingCompanyId =
+            (int) $this->message->company_id;
+
+        if (
+            $customer?->assignedTo &&
+            (int) $customer->assignedTo->company_id ===
+                $receivingCompanyId
+        ) {
+            return (int) $customer->assignedTo->id;
+        }
+
+        if (
+            $customer?->oldOwner &&
+            (int) $customer->oldOwner->company_id ===
+                $receivingCompanyId
+        ) {
+            return (int) $customer->oldOwner->id;
+        }
+
+        return null;
     }
 }

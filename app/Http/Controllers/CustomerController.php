@@ -4,54 +4,71 @@ namespace App\Http\Controllers;
 
 use App\Services\BitrixLeadService;
 use App\Models\Customer;
+use App\Models\Document;
+use App\Models\Message;
 use App\Models\Template;
 use App\Models\User;
 use App\Services\AuditService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class CustomerController extends Controller
 {
-    public function index(Request $request): Response
+
+   public function index(Request $request): Response
     {
-        $user = auth()->user();
-        $query = Customer::withoutGlobalScope(CompanyScope::class)->with(['assignedTo', 'oldOwner', 'latestMessage'])->withCount('documents');
-//	dd(Customer::whereNotNull('old_owner_id')->get());
-        // Executives only see their own assigned customers
-	if ($user->hasRole('executive')) {
-	    $query->where(function ($q) use ($user) {
-	        $q->where('assigned_to', $user->id)
-        	  ->orWhere('old_owner_id', $user->id);
-	    });
-	}
+        $user = $request->user();
 
-        // Admin + auditor see all customers in their company (CompanyScope handles this)
+        $query = Customer::withoutGlobalScope(
+            \App\Scopes\CompanyScope::class
+        )
+            ->visibleTo($user)
+            ->with([
+                'assignedTo:id,name,company_id',
+                'oldOwner:id,name,company_id',
+                'latestMessage',
+            ])
+            ->withCount('documents');
 
-        if ($request->search) {
-            $query->where(function ($q) use ($request) {
-                $q->where('name', 'like', "%{$request->search}%")
-                    ->orWhere('phone', 'like', "%{$request->search}%")
-                    ->orWhere('email', 'like', "%{$request->search}%")
-                    ->orWhere('company', 'like', "%{$request->search}%");
+        if ($request->filled('search')) {
+            $search = $request->input('search');
+
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%")
+                    ->orWhere('company', 'like', "%{$search}%");
             });
         }
 
-        if ($request->status) {
-            $query->where('status', $request->status);
+        if ($request->filled('status')) {
+            $query->where(
+                'status',
+                $request->input('status')
+            );
         }
 
-        if ($request->assigned_to) {
-            $query->where('assigned_to', $request->assigned_to);
+        if ($request->filled('assigned_to')) {
+            $query->where(
+                'assigned_to',
+                $request->input('assigned_to')
+            );
         }
-	
-        $customers = $query->orderByDesc('last_contacted_at')->paginate(20)->withQueryString();
 
-        // Executives list — scoped to same company
-        $executives = User::where('company_id', $user->company_id)
+        $customers = $query
+            ->orderByDesc('last_contacted_at')
+            ->paginate(20)
+            ->withQueryString();
+
+        $executives = User::where(
+            'company_id',
+            $user->company_id
+        )
             ->role('executive')
             ->select('id', 'name')
             ->get();
@@ -59,26 +76,90 @@ class CustomerController extends Controller
         return Inertia::render('Customers/Index', [
             'customers' => $customers,
             'executives' => $executives,
-            'filters' => $request->only(['search', 'status', 'assigned_to']),
+            'filters' => $request->only([
+                'search',
+                'status',
+                'assigned_to',
+            ]),
         ]);
     }
 
-    public function show(Customer $customer): Response
-    {
+    public function show(Customer $customer, Request $request): Response
+    {   
+	$selectedSessionId = $request->query('session_id');
 	$user = auth()->user();
         $this->authorize('view', $customer);
 
         AuditService::log('customer.viewed', $customer);
 
-        $messages = $customer->messages()
-            ->with(['sentBy', 'document'])
-            ->orderBy('created_at')
-            ->get();
+	$messages = Message::withoutGlobalScope(
+    \App\Scopes\CompanyScope::class
+)
+    ->where('customer_id', $customer->id)
+    ->where(function (Builder $query) use ($user) {
+        /*
+         * Existing normal visibility logic.
+         */
+        $query->visibleTo($user);
 
-        $documents = $customer->documents()
-            ->with('uploadedBy')
-            ->orderByDesc('created_at')
-            ->get();
+        /*
+         * Also include Arihant special-session messages when
+         * this customer is assigned to the logged-in executive,
+         * or assigned to an executive from the logged-in admin's company.
+         */
+        $query->orWhere(function (Builder $arihantQuery) use ($user) {
+            $arihantQuery
+                ->where(
+                    'messages.session_id',
+                    'arihant-special-session'
+                )
+                ->whereHas('customer', function (Builder $customerQuery) use ($user) {
+                    $customerQuery->withoutGlobalScope(
+                        \App\Scopes\CompanyScope::class
+                    );
+
+                    if ($user->hasRole('executive')) {
+                        $customerQuery->where(
+                            'customers.assigned_to',
+                            $user->id
+                        );
+                    } elseif ($user->hasAnyRole(['admin', 'auditor'])) {
+                        $customerQuery->whereHas(
+                            'assignedTo',
+                            function (Builder $assignedUserQuery) use ($user) {
+                                $assignedUserQuery->where(
+                                    'company_id',
+                                    $user->company_id
+                                );
+                            }
+                        );
+                    } else {
+                        $customerQuery->whereRaw('1 = 0');
+                    }
+                });
+        });
+    })
+    ->with([
+        'sentBy:id,name',
+        'document',
+    ])
+    ->orderBy('created_at')
+    ->get();
+
+	$documents = Document::withoutGlobalScope(
+	    \App\Scopes\CompanyScope::class
+	)
+	    ->where('customer_id', $customer->id)
+	    ->whereHas('message', function ($query) use ($user) {
+	        $query
+	            ->withoutGlobalScope(
+	                \App\Scopes\CompanyScope::class
+	            )
+	            ->visibleTo($user);
+	    })
+	    ->with('uploadedBy')
+	    ->orderByDesc('created_at')
+	    ->get();
 
         $executives = User::where('company_id', auth()->user()->company_id)
             ->role('executive')

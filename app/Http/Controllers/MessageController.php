@@ -125,16 +125,28 @@ class MessageController extends Controller
 
     }
 
-    public function markRead(Request $request, Customer $customer): JsonResponse
-    {
+    public function markRead(
+        Request $request,
+        Customer $customer
+    ) {
+        $user = $request->user();
+
         $this->authorize('view', $customer);
 
-        $customer->messages()
+        Message::withoutGlobalScope(
+            \App\Scopes\CompanyScope::class
+        )
+            ->visibleTo($user)
+            ->where('customer_id', $customer->id)
             ->where('direction', 'inbound')
             ->whereNull('read_at')
-            ->update(['read_at' => now(), 'status' => 'read']);
+            ->update([
+                'read_at' => now(),
+            ]);
 
-        return response()->json(['ok' => true]);
+        return response()->json([
+            'success' => true,
+        ]);
     }
 
     public function history(Customer $customer): JsonResponse

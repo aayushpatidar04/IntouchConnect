@@ -18,37 +18,25 @@ use Illuminate\Database\Eloquent\Scope;
  */
 class CompanyScope implements Scope
 {
-    public function apply(Builder $builder, Model $model): void
-    {
-        // Only filter when there is an authenticated session
-        if (! auth()->check()) {
+    public function apply(
+        Builder $builder,
+        Model $model
+    ): void {
+        if (!auth()->check()) {
             return;
         }
 
         $user = auth()->user();
 
-        // Super-admin sees everything — no filter applied
-        if ($user->hasRole('super_admin')) {
+        if ($user->isSuperAdmin()) {
             return;
         }
 
-	if ($user->hasRole('executive')) {
-	    $builder->where(function ($q) use ($user, $model) {
-            $q->where($model->getTable().'.company_id', $user->company_id);
-
-            if (in_array('old_owner_id', $model->getConnection()
-                ->getSchemaBuilder()
-                ->getColumnListing($model->getTable()))) {
-            	    $q->orWhere($model->getTable().'.old_owner_id', $user->id);
-        	}
-	    });
-    	    return;
-	}
-
-
-        // All other roles (admin, auditor) are scoped to their company
-        if ($user->hasAnyRole(['admin', 'auditor']) && $user->company_id) {
-            $builder->where($model->getTable() . '.company_id', $user->company_id);
+        if ($user->company_id) {
+            $builder->where(
+                $model->qualifyColumn('company_id'),
+                $user->company_id
+            );
         }
     }
 }

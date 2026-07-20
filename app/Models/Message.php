@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Builder;
 
 class Message extends Model
 {
@@ -77,5 +78,28 @@ class Message extends Model
     public function getIsOutboundAttribute(): bool
     {
         return $this->direction === 'outbound';
+    }
+
+    public function scopeVisibleTo(
+        Builder $query,
+        User $user
+    ): Builder {
+        if ($user->isSuperAdmin()) {
+            return $query;
+        }
+
+        $companySessionIds = WhatsappSession::query()
+            ->where('company_id', $user->company_id)
+            ->pluck('session_id');
+
+        return $query
+            ->whereIn('messages.session_id', $companySessionIds)
+            ->whereHas('customer', function (Builder $customerQuery) use ($user) {
+                $customerQuery
+                    ->withoutGlobalScope(
+                        \App\Scopes\CompanyScope::class
+                    )
+                    ->visibleTo($user);
+            });
     }
 }

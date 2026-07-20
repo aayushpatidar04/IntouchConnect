@@ -11,6 +11,7 @@ use App\Services\GatewayService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class DocumentController extends Controller
 {
@@ -124,44 +125,181 @@ class DocumentController extends Controller
         ]);
     }
 
-    public function download(Document $document): Response
-    {
-        $this->authorize('view', $document->customer);
+    public function preview(
+        Request $request,
+        Document $document
+    ): Response {
+        $this->authorize(
+            'view',
+            $document->customer
+        );
 
-        AuditService::log('document.downloaded', $document);
-        $content = $this->docService->getDecryptedContent($document);
-        $filename = $document->original_filename;
-        $ext = pathinfo($filename, PATHINFO_EXTENSION);
+        $content = $this->docService
+            ->getDecryptedContent($document);
 
-        if (empty($ext)) {
-            $mimeMap = [
-                'application/pdf' => 'pdf',
-                'application/msword' => 'doc',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
-                'application/vnd.ms-excel' => 'xls',
-                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
-                'text/plain' => 'txt',
-                'text/csv' => 'csv',
-                'image/jpeg' => 'jpg',
-                'image/png' => 'png',
-                'image/gif' => 'gif',
-                'image/webp' => 'webp',
-                'audio/mpeg' => 'mp3',
-                'audio/ogg' => 'ogg',
-                'audio/wav' => 'wav',
-                'video/mp4' => 'mp4',
-                'video/3gpp' => '3gp',
-            ];
-            if ($guessed = $mimeMap[$document->mime_type] ?? null) {
-                $filename .= '.' . $guessed;
-            }
+        $filename = $this->resolveFilename(
+            $document
+        );
+
+        $mimeType = $document->mime_type
+            ?: 'application/octet-stream';
+
+        return response(
+            $content,
+            200,
+            [
+                'Content-Type' =>
+                    $mimeType,
+
+                'Content-Disposition' =>
+                    $this->contentDisposition(
+                        'inline',
+                        $filename
+                    ),
+
+                'Content-Length' =>
+                    strlen($content),
+
+                'Cache-Control' =>
+                    'private, max-age=300',
+
+                'Pragma' =>
+                    'private',
+
+                'X-Content-Type-Options' =>
+                    'nosniff',
+
+                'Accept-Ranges' =>
+                    'none',
+            ]
+        );
+    }
+
+    public function download(
+        Document $document
+    ): Response {
+        $this->authorize(
+            'view',
+            $document->customer
+        );
+
+        AuditService::log(
+            'document.downloaded',
+            $document
+        );
+
+        $content = $this->docService
+            ->getDecryptedContent($document);
+
+        $filename = $this->resolveFilename(
+            $document
+        );
+
+        return response(
+            $content,
+            200,
+            [
+                'Content-Type' =>
+                    $document->mime_type
+                    ?: 'application/octet-stream',
+
+                'Content-Disposition' =>
+                    $this->contentDisposition(
+                        'attachment',
+                        $filename
+                    ),
+
+                'Content-Length' =>
+                    strlen($content),
+
+                'Cache-Control' =>
+                    'private, no-store, no-cache, must-revalidate',
+
+                'X-Content-Type-Options' =>
+                    'nosniff',
+            ]
+        );
+    }
+
+    private function resolveFilename(
+        Document $document
+    ): string {
+        $filename = trim(
+            $document->original_filename
+                ?: $document->stored_filename
+                ?: 'attachment'
+        );
+
+        if (
+            pathinfo(
+                $filename,
+                PATHINFO_EXTENSION
+            )
+        ) {
+            return $filename;
         }
 
-        return response($content, 200, [
-            'Content-Type' => $document->mime_type,
-            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
-            'Content-Length' => strlen($content),
-        ]);
+        $extension = match (
+            strtolower(
+                $document->mime_type ?? ''
+            )
+        ) {
+            'application/pdf' => 'pdf',
+
+            'application/msword' => 'doc',
+
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' =>
+                'docx',
+
+            'application/vnd.ms-excel' =>
+                'xls',
+
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' =>
+                'xlsx',
+
+            'text/plain' => 'txt',
+            'text/csv' => 'csv',
+
+            'image/jpeg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+
+            'audio/mpeg' => 'mp3',
+            'audio/ogg' => 'ogg',
+            'audio/wav' => 'wav',
+
+            'video/mp4' => 'mp4',
+            'video/3gpp' => '3gp',
+
+            default => null,
+        };
+
+        return $extension
+            ? "{$filename}.{$extension}"
+            : $filename;
+    }
+
+    private function contentDisposition(
+        string $disposition,
+        string $filename
+    ): string {
+        $safeAsciiName = preg_replace(
+            '/[^A-Za-z0-9._-]/',
+            '_',
+            $filename
+        ) ?: 'attachment';
+
+        $encodedName = rawurlencode(
+            $filename
+        );
+
+        return sprintf(
+            '%s; filename="%s"; filename*=UTF-8\'\'%s',
+            $disposition,
+            $safeAsciiName,
+            $encodedName
+        );
     }
 
     public function updateStatus(Request $request, Document $document): JsonResponse

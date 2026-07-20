@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
+use Throwable;
 
 class CompanyController extends Controller
 {
@@ -427,4 +428,375 @@ class CompanyController extends Controller
 	
 	return response()->json($response->json(), $response->status());
     }
+
+    public function syncNewArihantUsers(): RedirectResponse
+{
+    try {
+        $departmentResponse = Http::withBasicAuth(
+            'Arihant',
+            'Arihant@2021'
+        )
+            ->timeout(60)
+            ->get(
+                'https://arihantapicore.arihantcapital.com/V1/bitrix24/Getdepartments'
+            );
+
+        $agentResponse = Http::withBasicAuth(
+            'Arihant',
+            'Arihant@2021'
+        )
+            ->timeout(60)
+            ->get(
+                'https://arihantapicore.arihantcapital.com/V1/bitrix24/GetAgents'
+            );
+
+        if (
+            !$departmentResponse->successful() ||
+            !$agentResponse->successful()
+        ) {
+            return back()->with(
+                'error',
+                'Unable to fetch departments or users from Arihant API.'
+            );
+        }
+
+        $departmentData = $departmentResponse->json();
+        $agentData = $agentResponse->json();
+
+        $departments =
+            $departmentData['data'] ??
+            $departmentData['result'] ??
+            $departmentData;
+
+        $agents =
+            $agentData['data'] ??
+            $agentData['result'] ??
+            $agentData;
+
+        $departmentMap = [];
+
+        foreach ($departments as $department) {
+            $departmentMap[
+                (int) $department['Id']
+            ] = $department;
+        }
+
+        /*
+         * Calculate department depth.
+         */
+        $getDepartmentDepth = function (
+            int $departmentId
+        ) use ($departmentMap): int {
+            $depth = 0;
+            $visited = [];
+
+            while (
+                $departmentId > 0 &&
+                isset($departmentMap[$departmentId]) &&
+                !isset($visited[$departmentId])
+            ) {
+                $visited[$departmentId] = true;
+                $depth++;
+
+                $departmentId = (int) (
+                    $departmentMap[$departmentId]['ParentId']
+                    ?? 0
+                );
+            }
+
+            return $depth;
+        };
+
+        /*
+         * Build hierarchy path for newly created companies.
+         */
+        $buildHierarchyPath = function (
+            int $departmentId
+        ) use ($departmentMap): string {
+            $parts = [];
+            $visited = [];
+
+            while (
+                $departmentId > 0 &&
+                isset($departmentMap[$departmentId]) &&
+                !isset($visited[$departmentId])
+            ) {
+                $visited[$departmentId] = true;
+
+                $parts[] = trim(
+                    $departmentMap[$departmentId]['Name']
+                );
+
+                $departmentId = (int) (
+                    $departmentMap[$departmentId]['ParentId']
+                    ?? 0
+                );
+            }
+
+            return implode(
+                ' -> ',
+                array_reverse($parts)
+            );
+        };
+
+        $executiveRole = Role::firstOrCreate([
+            'name' => 'executive',
+            'guard_name' => 'web',
+        ]);
+
+        $createdUsers = 0;
+        $createdCompanies = 0;
+        $skippedExisting = 0;
+        $skippedInactive = 0;
+
+        foreach ($agents as $agent) {
+            /*
+             * Only active agents.
+             */
+            $isActive = filter_var(
+                $agent['Active'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            );
+
+            if (!$isActive) {
+                $skippedInactive++;
+                continue;
+            }
+
+            $email = trim(
+                (string) ($agent['Email'] ?? '')
+            );
+
+            if ($email === '') {
+                continue;
+            }
+
+            /*
+             * Never update existing users.
+             */
+            $alreadyExists = User::query()
+                ->where('email', $email)
+                ->orWhere(
+                    'bitrix_user_id',
+                    $agent['Id']
+                )
+                ->exists();
+
+            if ($alreadyExists) {
+                $skippedExisting++;
+                continue;
+            }
+
+            $departmentIds = array_values(
+                array_filter(
+                    array_map(
+                        'intval',
+                        $agent['DepartmentIds'] ?? []
+                    ),
+                    fn ($departmentId) =>
+                        isset(
+                            $departmentMap[$departmentId]
+                        )
+                )
+            );
+
+            if (empty($departmentIds)) {
+                continue;
+            }
+
+            /*
+             * Find deepest department.
+             */
+            $primaryDepartmentId =
+                $departmentIds[0];
+
+            $maximumDepth =
+                $getDepartmentDepth(
+                    $primaryDepartmentId
+                );
+
+            foreach ($departmentIds as $departmentId) {
+                $depth =
+                    $getDepartmentDepth(
+                        $departmentId
+                    );
+
+                if ($depth > $maximumDepth) {
+                    $maximumDepth = $depth;
+                    $primaryDepartmentId =
+                        $departmentId;
+                }
+            }
+
+            $department =
+                $departmentMap[
+                    $primaryDepartmentId
+                ];
+
+            /*
+             * Find an existing company of this department
+             * containing fewer than four executives.
+             */
+            $departmentCompanies = Company::query()
+                ->where(
+                    'external_department_id',
+                    (string) $primaryDepartmentId
+                )
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->get();
+
+            $targetCompany = null;
+
+            foreach (
+                $departmentCompanies as $company
+            ) {
+                $executiveCount = User::query()
+                    ->where(
+                        'company_id',
+                        $company->id
+                    )
+                    ->where('is_active', true)
+                    ->whereHas(
+                        'roles',
+                        fn ($query) =>
+                            $query->where(
+                                'name',
+                                'executive'
+                            )
+                    )
+                    ->count();
+
+                if ($executiveCount < 4) {
+                    $targetCompany = $company;
+                    break;
+                }
+            }
+
+            /*
+             * Create a new split company when every existing
+             * company already has four executives.
+             */
+            if (!$targetCompany) {
+                $companyNumber =
+                    $departmentCompanies->count() + 1;
+
+                $departmentName = trim(
+                    $department['Name']
+                );
+
+                $companyName =
+                    $departmentCompanies->isEmpty()
+                        ? $departmentName
+                        : "{$departmentName} {$companyNumber}";
+
+                $parentCompanyId = null;
+
+                $parentDepartmentId = (int) (
+                    $department['ParentId'] ?? 0
+                );
+
+                if ($parentDepartmentId > 0) {
+                    $parentCompanyId =
+                        Company::query()
+                            ->where(
+                                'external_department_id',
+                                (string) $parentDepartmentId
+                            )
+                            ->orderBy('id')
+                            ->value('id');
+                }
+
+                $targetCompany = Company::create([
+                    'name' => $companyName,
+
+                    'slug' => Str::slug(
+                        "{$companyName}-{$primaryDepartmentId}-{$companyNumber}"
+                    ),
+
+                    'external_department_id' =>
+                        (string) $primaryDepartmentId,
+
+                    'hierarchy_path' =>
+                        $buildHierarchyPath(
+                            $primaryDepartmentId
+                        ),
+
+                    'parent_company_id' =>
+                        $parentCompanyId,
+
+                    'is_active' => true,
+                ]);
+
+                $createdCompanies++;
+            }
+
+            DB::transaction(function () use (
+                $agent,
+                $email,
+                $targetCompany,
+                $executiveRole,
+                &$createdUsers
+            ) {
+                $user = User::create([
+                    'name' => $agent['Name'],
+
+                    'email' => $email,
+
+                    'phone' =>
+                        !empty($agent['Mobile'])
+                            ? $agent['Mobile']
+                            : null,
+
+                    'password' =>
+                        Hash::make('Arihant@123'),
+
+                    'is_active' => true,
+
+                    'company_id' =>
+                        $targetCompany->id,
+
+                    'bitrix_user_id' =>
+                        $agent['Id'],
+                ]);
+
+                $user->assignRole(
+                    $executiveRole
+                );
+
+                DB::table('user_company_access')
+                    ->updateOrInsert(
+                        [
+                            'user_id' => $user->id,
+
+                            'company_id' =>
+                                $targetCompany->id,
+                        ],
+                        [
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]
+                    );
+
+                $createdUsers++;
+            });
+        }
+
+        return back()->with(
+            'success',
+            "{$createdUsers} new active users synced. " .
+            "{$createdCompanies} new teams created. " .
+            "{$skippedExisting} existing users skipped. " .
+            "{$skippedInactive} inactive users skipped."
+        );
+    } catch (Throwable $exception) {
+        report($exception);
+
+        return back()->with(
+            'error',
+            'User sync failed: ' .
+            $exception->getMessage()
+        );
+    }
+}
 }

@@ -1,7 +1,18 @@
 <template>
     <SuperAdminLayout title="Platform Overview">
         <div class="p-6 space-y-6 animate-fade-in">
-
+	    <button
+	        type="button"
+	        :disabled="syncing"
+	        @click="syncNewUsers"
+	        class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+	    >
+        	{{
+	            syncing
+                	? 'Syncing...'
+        	        : 'Sync New Users'
+	        }}
+	    </button>
             <!-- Platform stats -->
             <div class="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <StatCard label="Total Companies"  :value="stats.total_companies"  icon="🏢" color="blue" />
@@ -123,7 +134,26 @@ import { computed } from 'vue';
 import { Link } from '@inertiajs/vue3';
 import SuperAdminLayout from '@/Components/Layout/SuperAdminLayout.vue';
 import StatCard from '@/Components/UI/StatCard.vue';
+import { ref } from 'vue';
+import { router } from '@inertiajs/vue3';
 
+const syncing = ref(false);
+
+function syncNewUsers() {
+    syncing.value = true;
+
+    router.post(
+        route('superadmin.sync-new-users'),
+        {},
+        {
+            preserveScroll: true,
+
+            onFinish: () => {
+                syncing.value = false;
+            },
+        }
+    );
+}
 const props = defineProps({
     stats:           { type: Object, required: true },
     companies:       { type: Array,  default: () => [] },

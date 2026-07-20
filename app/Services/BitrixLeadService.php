@@ -292,7 +292,7 @@ class BitrixLeadService
 	    return [
         	'customer' => $customer->fresh([
 	            'assignedTo',
-        	    'company',
+        	    'companyData',
 	        ]),
 
         	'action' => $action,

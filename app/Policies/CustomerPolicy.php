@@ -4,6 +4,7 @@ namespace App\Policies;
 
 use App\Models\Customer;
 use App\Models\User;
+use App\Scopes\CompanyScope;
 
 class CustomerPolicy
 {
@@ -12,27 +13,14 @@ class CustomerPolicy
         return true;
     }
 
-    public function view(User $user, Customer $customer): bool
-    {
-        // Super-admin can view everything
-        if ($user->isSuperAdmin()) return true;
-
-        // Company admin and auditor can view all customers in their company
-        if ($user->hasAnyRole(['admin', 'auditor'])) {
-            return $user->company_id === $customer->company_id;
-        }
-
-        // Executive: can view if assigned_to me (same company check)
-        if ($customer->assigned_to === $user->id) {
-            return $user->company_id === $customer->company_id;
-        }
-
-        // Executive: can view if I'm the old owner (any company allowed)
-        if ($customer->old_owner_id === $user->id) {
-            return true;
-        }
-
-        return false;
+    public function view(
+        User $user,
+        Customer $customer
+    ): bool {
+        return Customer::withoutGlobalScope(CompanyScope::class)
+            ->visibleTo($user)
+            ->whereKey($customer->id)
+            ->exists();
     }
     
     public function create(User $user): bool

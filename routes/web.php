@@ -40,7 +40,8 @@ Route::middleware(['auth', 'verified', 'company.active'])->group(function () {
         Route::post('/documents', [DocumentController::class, 'upload'])->name('documents.upload');
         Route::post('/documents/{document}/send', [DocumentController::class, 'sendToCustomer'])->name('documents.send');
     });
-
+	
+    Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])->name('documents.preview');
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->name('documents.download');
     Route::patch('/documents/{document}/status', [DocumentController::class, 'updateStatus'])->name('documents.status');
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
@@ -113,6 +114,7 @@ Route::middleware(['auth', 'verified', 'company.active'])->group(function () {
             Route::get('/bitrix-departments', [CompanyController::class, 'bitrixDepartments'])->name('bitrix-departments');
             Route::get('/bitrix-agents', [CompanyController::class, 'bitrixAgents'])->name('bitrix-agents');
             Route::get('/bitrix-lead/{id}', [CompanyController::class, 'bitrixLead'])->name('bitrix-lead');
+	    Route::post('/sync-new-users', [CompanyController::class, 'syncNewArihantUsers'])->name('sync-new-users');
 
             // ═════════════════════════════════════════════════════════════════
             //  GLOBAL TEMPLATES — Superadmin CRUD

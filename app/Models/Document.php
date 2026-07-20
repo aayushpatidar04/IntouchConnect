@@ -28,6 +28,13 @@ class Document extends Model
         'encryption_key_id',
     ];
 
+    protected $appends = [
+        'download_url',
+        'preview_url',
+        'formatted_size',
+        'media_category',
+    ];
+
     protected function casts(): array
     {
         return [
@@ -52,25 +59,83 @@ class Document extends Model
 
     public function getDownloadUrlAttribute(): string
     {
-        return route('documents.download', $this->id);
+        return route(
+            'documents.download',
+            $this->id,
+            false
+        );
+    }
+
+    public function getPreviewUrlAttribute(): string
+    {
+        return route(
+            'documents.preview',
+            $this->id,
+            false
+        );
     }
 
     public function getFormattedSizeAttribute(): string
     {
-        $bytes = $this->size;
-        if ($bytes < 1024) return "{$bytes} B";
-        if ($bytes < 1048576) return round($bytes / 1024, 1) . ' KB';
-        return round($bytes / 1048576, 1) . ' MB';
+        $bytes = (int) $this->size;
+
+        if ($bytes <= 0) {
+            return 'Unknown size';
+        }
+
+        if ($bytes < 1024) {
+            return "{$bytes} B";
+        }
+
+        if ($bytes < 1048576) {
+            return round($bytes / 1024, 1) . ' KB';
+        }
+
+        if ($bytes < 1073741824) {
+            return round(
+                $bytes / 1048576,
+                1
+            ) . ' MB';
+        }
+
+        return round(
+            $bytes / 1073741824,
+            1
+        ) . ' GB';
+    }
+
+    public function getMediaCategoryAttribute(): string
+    {
+        $mime = strtolower(
+            $this->mime_type ?? ''
+        );
+
+        return match (true) {
+            str_starts_with($mime, 'image/') =>
+                'image',
+
+            str_starts_with($mime, 'video/') =>
+                'video',
+
+            str_starts_with($mime, 'audio/') =>
+                'audio',
+
+            $mime === 'application/pdf' =>
+                'pdf',
+
+            default =>
+                'document',
+        };
     }
 
     public function getIconAttribute(): string
     {
-        return match(true) {
-            str_contains($this->mime_type, 'pdf')   => 'document-text',
-            str_contains($this->mime_type, 'image') => 'photo',
-            str_contains($this->mime_type, 'video') => 'video-camera',
-            str_contains($this->mime_type, 'audio') => 'musical-note',
-            default                                  => 'paper-clip',
+        return match ($this->media_category) {
+            'pdf' => 'document-text',
+            'image' => 'photo',
+            'video' => 'video-camera',
+            'audio' => 'musical-note',
+            default => 'paper-clip',
         };
     }
 }
