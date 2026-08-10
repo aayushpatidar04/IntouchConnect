@@ -1,13 +1,3 @@
-/**
- * WhatsApp Gateway — Baileys Multi-Session Edition
- * --------------------------------------------------
- * Supports multiple simultaneous WhatsApp sessions (one per company/tenant).
- * Each session has its own auth_info subfolder, socket, QR, and state.
- * No Chromium needed — pure WebSocket via @whiskeysockets/baileys.
- *
- * Compatible with: Node.js 18+, cPanel, Hostinger shared hosting, any VPS.
- */
-
 import 'dotenv/config';
 
 import express from 'express';
@@ -18,9 +8,9 @@ import axios from 'axios';
 import multer from 'multer';
 import qrcodeImage from 'qrcode';
 import logger from './logger.js';
-// messageQueue import kept only if you still want /queue/stats endpoint
 import { messageQueue } from './queue.js';
 import { fileURLToPath } from 'url';
+import WebSocket from 'ws';
 
 import makeWASocket, {
     useMultiFileAuthState,
@@ -43,8 +33,8 @@ const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
 function logError(type, err) {
     const msg = `[${new Date().toISOString()}] ${type}: ${err.stack || err}\n`;
-    console.error(msg);       // still shows in terminal if you have SSH
-    logStream.write(msg);     // persists to file
+    console.error(msg);
+    logStream.write(msg);
 }
 
 process.on('unhandledRejection', err => logError('Unhandled Rejection', err));
@@ -82,6 +72,9 @@ const CRM_MEDIA_UPLOAD_URL = stripTrailingSlash(process.env.CRM_MEDIA_UPLOAD_URL
 const CRM_MEDIA_UPLOAD_TIMEOUT_MS = Number(process.env.CRM_MEDIA_UPLOAD_TIMEOUT_MS || 60000);
 
 let cachedBaileysVersion = null;
+
+// ── FIX #1: Restriction tracking (In-memory + should sync to DB) ──────────────
+const restrictedNumbers = new Map(); // `${sessionId}:${phone}` => { status, expiresAt, reason, errorCode }
 
 // ── Multi-session state ───────────────────────────────────────────────────────
 const sessions = new Map();
@@ -361,12 +354,53 @@ function getMessageType(msg) {
     if (m.contactMessage) return 'contact'; return 'text';
 }
 
-function isValidInbound(msg) {
-    const jid = msg.key.remoteJid ?? '';
-    if (msg.key.fromMe) return false;
-    if (isJidBroadcast(jid) || isJidGroup(jid) || isJidNewsletter?.(jid)) return false;
-    if (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid') || jid.endsWith('@c.us')) return true;
-    return false;
+function isValidInbound(msg, logger = console) {
+    const jid = msg?.key?.remoteJid ?? '';
+    if (!msg?.key) {
+        logger.info('Inbound rejected: missing message key');
+        return false;
+    }
+
+    if (msg.key.fromMe === true) {
+        logger.info(
+            `Inbound rejected: message is fromMe, jid=${jid}, id=${msg.key.id}`
+        );
+        return false;
+    }
+
+    if (!jid) {
+        logger.info('Inbound rejected: missing remoteJid');
+        return false;
+    }
+
+    if (isJidBroadcast(jid)) {
+        logger.info(`Inbound rejected: broadcast jid=${jid}`);
+        return false;
+    }
+
+    if (isJidGroup(jid)) {
+        logger.info(`Inbound rejected: group jid=${jid}`);
+        return false;
+    }
+
+    if (
+        typeof isJidNewsletter === 'function' &&
+        isJidNewsletter(jid)
+    ) {
+        logger.info(`Inbound rejected: newsletter jid=${jid}`);
+        return false;
+    }
+    const isPersonalChat =
+        jid.endsWith('@s.whatsapp.net') ||
+        jid.endsWith('@lid') ||
+        jid.endsWith('@c.us');
+
+    if (!isPersonalChat) {
+        logger.info(`Inbound rejected: unsupported jid=${jid}`);
+        return false;
+    }
+
+    return true;
 }
 
 // ── CRM webhook notifier ──────────────────────────────────────────────────────
@@ -389,7 +423,6 @@ async function notifyCRM(payload, retries = 3) {
 }
 
 const pendingMessages = new Map();
-
 function trackPendingMessage(waMessageId, sessionId, chatId, messageId, maxWaitMs = 60000) {
     const tracker = {
         waMessageId,
@@ -426,17 +459,69 @@ function trackPendingMessage(waMessageId, sessionId, chatId, messageId, maxWaitM
     }, maxWaitMs);
 }
 
-function updateMessageStatus(waMessageId, ack, extraData = {}) {
+function updateMessageStatus(
+    waMessageId,
+    ack,
+    extraData = {}
+) {
     const tracker = pendingMessages.get(waMessageId);
-    if (tracker) {
-        const status = ack === 3 ? 'read' : ack === 2 ? 'delivered' : ack === 1 ? 'sent' : 'failed';
-        tracker.status = status;
-        logger.info(`[${tracker.sessionId}] Message ${waMessageId} status: ${status}`);
 
-        if (['delivered', 'read', 'failed'].includes(status)) {
-            pendingMessages.delete(waMessageId);
-        }
+    if (!tracker) {
+        logger.debug(
+            `[ACK] No pending tracker found for ${waMessageId}`,
+            {
+                ack,
+                ...extraData,
+            }
+        );
+
+        return false;
     }
+
+    const status =
+        ack === 3
+            ? 'read'
+            : ack === 2
+                ? 'delivered'
+                : ack === 1
+                    ? 'sent'
+                    : 'failed';
+
+    tracker.status = status;
+    tracker.lastAck = ack;
+    tracker.updatedAt = Date.now();
+
+    logger.info(
+        `[${tracker.sessionId}] Message ${waMessageId} ` +
+        `tracker updated to ${status}`,
+        {
+            ack,
+            localMessageId: tracker.messageId,
+            ...extraData,
+        }
+    );
+
+    if (
+        status === 'delivered' ||
+        status === 'read' ||
+        status === 'failed'
+    ) {
+        if (tracker.timeoutHandle) {
+            clearTimeout(tracker.timeoutHandle);
+        }
+
+        pendingMessages.delete(waMessageId);
+
+        logger.debug(
+            `[${tracker.sessionId}] Pending tracker removed`,
+            {
+                waMessageId,
+                finalStatus: status,
+            }
+        );
+    }
+
+    return true;
 }
 
 function scheduleSessionReconnect({
@@ -551,7 +636,6 @@ function scheduleSessionReconnect({
 
         return;
     }
-
     const delay = Math.min(
         5000 * Math.pow(2, session.reconnectCount),
         60000
@@ -651,6 +735,12 @@ async function connectWhatsApp(sessionId) {
     const myGen = session.generation;
 
     sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.process(async (events) => {
+        logger.info(
+            `[${sessionId}] Events: ${Object.keys(events).join(', ')}`
+        );
+    })
 
     sock.ev.on('connection.update', async (update) => {
 
@@ -776,83 +866,554 @@ async function connectWhatsApp(sessionId) {
     });
 
     sock.ev.on('messages.upsert', async ({ messages: msgs, type }) => {
-        if (myGen !== session.generation) return;
-        if (type !== 'notify' && type !== 'append') return;
+        try {
+            logger.info(
+                `[${sessionId}] MESSAGES.UPSERT type=${type}: ${JSON.stringify(msgs)}`
+            );
 
-        const sixtySecondsAgo = Math.floor(Date.now() / 1000) - 60;
+            if (myGen !== session.generation) {
+                logger.warn(
+                    `[${sessionId}] Ignoring messages.upsert because socket generation is stale`,
+                    {
+                        socketGeneration: myGen,
+                        currentGeneration: session.generation,
+                    }
+                );
 
-        for (const msg of msgs) {
-            try {
-                if (!isValidInbound(msg)) continue;
+                return;
+            }
 
-                if (type === 'append') {
-                    const msgTime = msg.messageTimestamp ? (typeof msg.messageTimestamp === 'object' ? msg.messageTimestamp.low : Number(msg.messageTimestamp)) : 0;
-                    if (msgTime < sixtySecondsAgo) continue;
-                }
+            if (type !== 'notify' && type !== 'append') {
+                logger.info(
+                    `[${sessionId}] Ignoring messages.upsert type=${type}`
+                );
 
-                const jid = msg.key.remoteJid;
-                const rawFromPhone = msg.key.senderPn || msg.key.participantPn || jid;
-                const fromPhone = sanitisePhone(rawFromPhone);
-                if (!fromPhone) continue;
+                return;
+            }
 
-                const messageId = msg.key.id;
-                const body = extractText(msg);
-                const msgType = getMessageType(msg);
+            const sixtySecondsAgo =
+                Math.floor(Date.now() / 1000) - 60;
 
-                const mediaTypeMap = { imageMessage: 'image', documentMessage: 'document', videoMessage: 'video', audioMessage: 'audio', stickerMessage: 'sticker' };
-                const mediaKey = Object.keys(mediaTypeMap).find(k => msg.message?.[k]);
+            for (const msg of msgs) {
+                try {
+                    logger.info(
+                        `Processing inbound candidate: ${JSON.stringify({
+                        key: msg.key,
+                            messageTimestamp: msg.messageTimestamp,
+                            messageType: msg.message
+                                ? Object.keys(msg.message)[0]
+                                : null,
+                        })}`
+                    );
+                    if (msg.key?.fromMe === true) {
+                        logger.info(
+                            `[${sessionId}] Ignoring outbound message echo`
+                        );
+                        continue;
+                    }
 
-                if (!body && !mediaKey) continue;
-                if (!recordProcessedMessageId(session, messageId)) continue;
+                    if (!isValidInbound(msg, logger)) {
+                        logger.info(
+                            `[${sessionId}] Message rejected by isValidInbound: ${JSON.stringify({
+                                id: msg.key?.id,
+                                remoteJid: msg.key?.remoteJid,
+                                fromMe: msg.key?.fromMe,
+                                upsertType: type,
+                            })}`
+                        );
+                        continue;
+                    }
 
-                logger.info(`[${sessionId}] Inbound from ${fromPhone}: "${body?.substring(0, 80)}"`);
-
-                const payload = {
-                    from: fromPhone, body: body || '', type: msgType, timestamp: msg.messageTimestamp, message_id: messageId,
-                    is_forwarded: !!(msg.message?.extendedTextMessage?.contextInfo?.isForwarded),
-                };
-
-                if (mediaKey) {
-                    try {
-                        const mediaData = msg.message[mediaKey];
-                        const mime = mediaData.mimetype || 'application/octet-stream';
-                        const filename = mediaData.fileName || `attachment_${Date.now()}.${mimeToExt(mime)}`;
-                        payload.has_media = true;
-                        payload.media = { mimetype: mime, filename };
-
-                        const buffer = await downloadMediaMessage(
-                            msg, 'buffer', {}, { logger: silentLogger, reuploadRequest: sock.updateMediaMessage.bind(sock) }
+                    if (type === 'append') {
+                        const msgTime = getMessageTimestamp(
+                            msg.messageTimestamp
                         );
 
-                        const bufferSize = buffer.length;
-                        payload.media.size_bytes = bufferSize;
+                        if (msgTime < sixtySecondsAgo) {
+                            logger.info(
+                                `[${sessionId}] Old append message skipped`,
+                                {
+                                    id: msg.key?.id,
+                                    messageTimestamp: msgTime,
+                                }
+                            );
 
-                        let uploadResult = null;
-                        if (bufferSize > CRM_MAX_MEDIA_BYTES && CRM_MEDIA_UPLOAD_URL) {
-                            uploadResult = await uploadMediaToCRM({
-                                sessionId, fromPhone, filename, mimetype: mime, buffer, messageId,
-                                mediaType: mediaTypeMap[mediaKey]
-                            });
+                            continue;
                         }
-
-                        if (uploadResult?.media_url || uploadResult?.media_id || uploadResult?.file_id || uploadResult?.id) {
-                            payload.media.crm_media_url = uploadResult.media_url;
-                            payload.media.crm_file_id = uploadResult.media_id || uploadResult.file_id || uploadResult.id;
-                            payload.media.note = 'media stored in CRM';
-                        } else if (bufferSize <= CRM_MAX_MEDIA_BYTES) {
-                            payload.media.data = buffer.toString('base64');
-                        } else {
-                            payload.media.note = 'media omitted due to size limit or upload failure';
-                        }
-                    } catch (mediaErr) {
-                        logger.error(`[${sessionId}] Media download failed:`, mediaErr.message);
                     }
-                }
 
-                await notifyCRM({ event: 'incoming_message', session_id: sessionId, data: payload });
-            } catch (err) {
-                logger.error(`[${sessionId}] Message processing error:`, err.message);
+                    const jid = msg.key.remoteJid;
+
+                    const rawFromPhone =
+                        msg.key.senderPn ||
+                        msg.key.participantPn ||
+                        msg.key.remoteJidAlt ||
+                        msg.key.participantAlt ||
+                        jid;
+
+                    const fromPhone = sanitisePhone(
+                        rawFromPhone
+                    );
+
+                    if (!fromPhone) {
+                        logger.warn(
+                            `[${sessionId}] Could not resolve sender phone`,
+                            {
+                                id: msg.key?.id,
+                                remoteJid: jid,
+                                remoteJidAlt:
+                                    msg.key?.remoteJidAlt,
+                                senderPn:
+                                    msg.key?.senderPn,
+                                participantPn:
+                                    msg.key?.participantPn,
+                            }
+                        );
+
+                        continue;
+                    }
+
+                    const messageId = msg.key.id;
+                    const body = extractText(msg);
+                    const msgType = getMessageType(msg);
+
+                    const mediaTypeMap = {
+                        imageMessage: 'image',
+                        documentMessage: 'document',
+                        videoMessage: 'video',
+                        audioMessage: 'audio',
+                        stickerMessage: 'sticker',
+                    };
+
+                    const mediaKey = Object.keys(
+                        mediaTypeMap
+                    ).find((key) => msg.message?.[key]);
+
+                    if (!body && !mediaKey) {
+                        logger.info(
+                            `[${sessionId}] Empty or unsupported inbound message skipped`,
+                            {
+                                id: messageId,
+                                messageTypes: Object.keys(
+                                    msg.message || {}
+                                ),
+                            }
+                        );
+
+                        continue;
+                    }
+
+                    if (
+                        !recordProcessedMessageId(
+                            session,
+                            messageId
+                        )
+                    ) {
+                        logger.info(
+                            `[${sessionId}] Duplicate inbound message skipped: ${messageId}`
+                        );
+
+                        continue;
+                    }
+
+                    logger.info(
+                        `[${sessionId}] Inbound from ${fromPhone}: "${body?.substring(0, 80) || '[media]'}"`
+                    );
+
+                    /*
+                     * Forwarded information can be present inside
+                     * text contextInfo or media contextInfo.
+                     */
+                    const messageContextInfo =
+                        msg.message
+                            ?.extendedTextMessage
+                            ?.contextInfo ||
+                        (
+                            mediaKey
+                                ? msg.message?.[mediaKey]
+                                    ?.contextInfo
+                                : null
+                        );
+
+                    const payload = {
+                        from: fromPhone,
+                        body: body || '',
+                        type: mediaKey
+                            ? mediaTypeMap[mediaKey]
+                            : msgType,
+
+                        timestamp: getMessageTimestamp(
+                            msg.messageTimestamp
+                        ),
+
+                        message_id: messageId,
+                        remote_jid: jid,
+
+                        remote_jid_alt:
+                            msg.key.remoteJidAlt || null,
+
+                        sender_pn:
+                            msg.key.senderPn || null,
+
+                        participant_pn:
+                            msg.key.participantPn || null,
+
+                        push_name:
+                            msg.pushName || null,
+
+                        is_forwarded: Boolean(
+                            messageContextInfo
+                                ?.isForwarded
+                        ),
+                        /*
+                         * Always initialize media fields.
+                         * This makes webhook debugging easier.
+                         */
+                        has_media: false,
+                        media: null,
+                    };
+
+                    // ── Download and prepare inbound media ─────────────
+                    if (mediaKey) {
+                        try {
+                            const mediaMessage =
+                                msg.message[mediaKey];
+
+                            const mime =
+                                mediaMessage.mimetype ||
+                                (
+                                    mediaKey ===
+                                        'stickerMessage'
+                                        ? 'image/webp'
+                                        : 'application/octet-stream'
+                                );
+
+                            const extension =
+                                mimeToExt(mime) || 'bin';
+
+                            const filename =
+                                mediaMessage.fileName ||
+                                mediaMessage.filename ||
+                                `attachment_${Date.now()}.${extension}`;
+
+                            logger.info(
+                                `[${sessionId}] Downloading inbound media`,
+                                {
+                                    messageId,
+                                    mediaKey,
+                                    mediaType:
+                                        mediaTypeMap[
+                                        mediaKey
+                                        ],
+                                    mimetype: mime,
+                                    filename,
+                                }
+                            );
+
+                            const buffer =
+                                await downloadMediaMessage(
+                                    msg,
+                                    'buffer',
+                                    {},
+                                    {
+                                        logger: silentLogger,
+
+                                        reuploadRequest:
+                                            sock.updateMediaMessage.bind(
+                                                sock
+                                            ),
+                                    }
+
+
+
+                                );
+
+                            if (
+                                !Buffer.isBuffer(buffer) ||
+                                buffer.length === 0
+                            ) {
+                                throw new Error(
+                                    'Downloaded media buffer is empty'
+                                );
+                            }
+
+                            const bufferSize =
+                                buffer.length;
+
+                            payload.has_media = true;
+
+                            payload.media = {
+                                mimetype: mime,
+                                filename,
+                                size_bytes: bufferSize,
+                                media_type:
+                                    mediaTypeMap[mediaKey],
+                            };
+
+                            logger.info(
+                                `[${sessionId}] Inbound media downloaded`,
+                                {
+                                    messageId,
+                                    filename,
+                                    mimetype: mime,
+                                    sizeBytes:
+                                        bufferSize,
+                                    inlineLimit:
+                                        CRM_MAX_MEDIA_BYTES,
+                                }
+                            );
+
+                            /*
+                             * Large files:
+                             * upload directly to CRM storage.
+                             */
+                            if (
+                                bufferSize >
+                                CRM_MAX_MEDIA_BYTES
+                            ) {
+                                if (
+                                    !CRM_MEDIA_UPLOAD_URL
+                                ) {
+                                    throw new Error(
+                                        'CRM media upload URL is not configured for large media'
+                                    );
+                                }
+
+                                logger.info(
+                                    `[${sessionId}] Uploading large inbound media to CRM`,
+                                    {
+                                        messageId,
+                                        filename,
+                                        sizeBytes:
+                                            bufferSize,
+                                    }
+                                );
+
+                                const uploadResult =
+                                    await uploadMediaToCRM({
+                                        sessionId,
+                                        fromPhone,
+                                        filename,
+                                        mimetype: mime,
+                                        buffer,
+                                        messageId,
+
+                                        mediaType:
+                                            mediaTypeMap[
+                                            mediaKey
+                                            ],
+                                    });
+
+                                logger.info(
+                                    `[${sessionId}] CRM media upload response`,
+                                    {
+                                        messageId,
+                                        uploadResult,
+                                    }
+                                );
+
+                                const uploadedMediaUrl =
+                                    uploadResult
+                                        ?.media_url ||
+                                    uploadResult
+                                        ?.url ||
+                                    uploadResult
+                                        ?.file_url ||
+                                    null;
+
+                                const uploadedMediaId =
+                                    uploadResult
+                                        ?.media_id ||
+                                    uploadResult
+                                        ?.file_id ||
+                                    uploadResult
+                                        ?.id ||
+                                    null;
+
+                                if (
+                                    !uploadedMediaUrl &&
+                                    !uploadedMediaId
+                                ) {
+                                    throw new Error(
+                                        'CRM media upload completed without a media URL or file ID'
+                                    );
+                                }
+
+                                payload.media.crm_media_url =
+                                    uploadedMediaUrl;
+
+                                payload.media.crm_file_id =
+                                    uploadedMediaId;
+
+                                payload.media.note =
+                                    'media stored in CRM';
+                            } else {
+                                /*
+                                 * Small files:
+                                 * send inline Base64 to Laravel.
+                                 */
+                                payload.media.data =
+                                    buffer.toString(
+                                        'base64'
+                                    );
+
+                                payload.media.note =
+                                    'media sent inline';
+                            }
+
+                            logger.info(
+                                `[${sessionId}] Media payload prepared`,
+                                {
+                                    messageId,
+                                    hasMedia:
+                                        payload.has_media,
+
+                                    filename:
+                                        payload.media
+                                            ?.filename,
+
+                                    mimetype:
+                                        payload.media
+                                            ?.mimetype,
+
+                                    sizeBytes:
+                                        payload.media
+                                            ?.size_bytes,
+
+                                    hasInlineData:
+                                        Boolean(
+                                            payload.media
+                                                ?.data
+                                        ),
+
+                                    crmMediaUrl:
+                                        payload.media
+                                            ?.crm_media_url ||
+                                        null,
+
+                                    crmFileId:
+                                        payload.media
+                                            ?.crm_file_id ||
+                                        null,
+                                }
+                            );
+                        } catch (mediaError) {
+                            logger.error(
+                                `[${sessionId}] Media processing failed`,
+                                {
+                                    message:
+                                        mediaError.message,
+
+                                    stack:
+                                        mediaError.stack,
+
+                                    messageId,
+                                    mediaKey,
+
+                                    mediaType:
+                                        mediaTypeMap[
+                                        mediaKey
+                                        ],
+                                }
+                            );
+
+                            /*
+                             * Do not tell Laravel that media is available
+                             * when neither Base64 nor CRM URL was created.
+                             */
+                            payload.has_media = false;
+
+                            payload.media = null;
+
+                            payload.media_error =
+                                mediaError.message;
+                        }
+                    }
+
+                    logger.info(
+                        `[${sessionId}] Sending incoming message payload to CRM`,
+                        {
+                            messageId,
+                            fromPhone,
+                            type: payload.type,
+                            hasMedia:
+                                payload.has_media,
+
+                            media: payload.media
+                                ? {
+                                    filename:
+                                        payload.media
+                                            .filename,
+
+                                    mimetype:
+                                        payload.media
+                                            .mimetype,
+
+                                    sizeBytes:
+                                        payload.media
+                                            .size_bytes,
+
+                                    hasInlineData:
+                                        Boolean(
+                                            payload.media
+                                                .data
+                                        ),
+
+                                    crmMediaUrl:
+                                        payload.media
+                                            .crm_media_url ||
+                                        null,
+
+                                    crmFileId:
+                                        payload.media
+                                            .crm_file_id ||
+                                        null,
+                                }
+                                : null,
+                        }
+                    );
+
+                    await notifyCRM({
+                        event: 'incoming_message',
+                        session_id: sessionId,
+                        data: payload,
+                    });
+                    logger.info(
+                        `[${sessionId}] Incoming message sent to CRM`,
+                        {
+                            messageId,
+                            fromPhone,
+                            hasMedia:
+                                payload.has_media,
+                        }
+                    );
+                } catch (messageError) {
+                    logger.error(
+                        `[${sessionId}] Message processing error: ${JSON.stringify({
+                            name: messageError?.name,
+                            message: messageError?.message,
+                            stack: messageError?.stack,
+                            messageId: msg?.key?.id,
+                            remoteJid: msg?.key?.remoteJid,
+                            fromMe: msg?.key?.fromMe,
+                            upsertType: type,
+                        })}`
+                    );
+                }
             }
+        } catch (eventError) {
+            logger.error(
+                `[${sessionId}] messages.upsert handler failed`,
+                {
+                    message:
+                        eventError.message,
+
+                    stack:
+                        eventError.stack,
+
+                    type,
+                }
+            );
         }
     });
 
@@ -911,54 +1472,144 @@ async function connectWhatsApp(sessionId) {
     sock.ev.on('messages.update', async (updates) => {
         if (myGen !== session.generation) return;
 
-        logger.info(`[${sessionId}] MESSAGES.UPDATE: ${JSON.stringify(updates)}`);
+        logger.info(
+            `[${sessionId}] MESSAGES.UPDATE: ${JSON.stringify(updates)}`
+        );
 
-        for (const update of updates) {
-            const { key, update: msgUpdate } = update;
+        for (const item of updates) {
+            const { key, update: msgUpdate } = item;
 
-            if (!key?.fromMe) continue;
-
-            // Check for status changes
-            if (msgUpdate?.status !== undefined) {
-                const statusMap = {
-                    0: 'error',
-                    1: 'pending',
-                    2: 'server_ack',
-                    3: 'delivery_ack',
-                    4: 'read',
-                    5: 'played',
-                };
-                const status = statusMap[msgUpdate.status] || `unknown_${msgUpdate.status}`;
-
-                logger.info(`[${sessionId}] Message ${key.id} status update: ${status} (code=${msgUpdate.status})`);
-
-                // If error status, notify CRM
-                if (msgUpdate.status === 0) {
-                    updateMessageStatus(key.id, 0, { error: 'Server rejected' });
-
-                    await notifyCRM({
-                        event: 'message_ack',
-                        session_id: sessionId,
-                        data: {
-                            message_id: key.id,
-                            wa_message_id: key.id,
-                            ack: 0,
-                            status: 'failed',
-                            reason: 'WhatsApp server rejected the message',
-                            to: key.remoteJid,
-                        }
-                    });
-                }
+            if (!key?.fromMe || !key.id) {
+                continue;
             }
 
-            // Check for errors in message stub
-            if (msgUpdate?.messageStubType) {
-                logger.error(`[${sessionId}] Message ${key.id} stub type: ${msgUpdate.messageStubType}`);
+            if (msgUpdate?.status === undefined) {
+                continue;
             }
+
+            const baileysStatus = Number(msgUpdate.status);
+
+            const statusMap = {
+                0: 'error',
+                1: 'pending',
+                2: 'server_ack',
+                3: 'delivery_ack',
+                4: 'read',
+                5: 'played',
+            };
+
+            const readableStatus =
+                statusMap[baileysStatus] ??
+                `unknown_${baileysStatus}`;
+
+            logger.info(
+                `[${sessionId}] Message ${key.id} status update: ` +
+                `${readableStatus} (code=${baileysStatus})`
+            );
+
+        /*
+         * Convert Baileys message status to the ACK values expected
+         * by Laravel:
+         *
+         * Baileys 2 = accepted by WhatsApp server → ACK 1 / sent
+         * Baileys 3 = delivered to recipient      → ACK 2 / delivered
+         * Baileys 4 = read by recipient           → ACK 3 / read
+         * Baileys 5 = played                      → ACK 3 / read
+         * Baileys 0 = error                       → ACK 0 / failed
+         */
+            const ackMap = {
+                0: 0,
+                2: 1,
+                3: 2,
+                4: 3,
+                5: 3,
+            };
+
+            const ack = ackMap[baileysStatus];
+
+        // Status 1 is only pending, so do not notify CRM yet.
+            if (ack === undefined) {
+                continue;
+            }
+
+            const tracker = pendingMessages.get(key.id);
+
+        /*
+         * This updates the tracker and, for delivered/read/failed,
+         * clears the 60-second failure timeout.
+         */
+            updateMessageStatus(key.id, ack, {
+                source: 'messages.update',
+                baileysStatus,
+            });
+
+            await notifyCRM({
+                event: 'message_ack',
+                session_id: sessionId,
+                data: {
+                /*
+                 * Local Laravel message ID. This is the safest way
+                 * to identify the database row.
+                 */
+                    message_id: tracker?.messageId ?? null,
+
+                /*
+                 * WhatsApp/Baileys message ID.
+                 */
+                    wa_message_id: key.id,
+
+                    ack,
+                    status:
+                        ack === 3
+                            ? 'read'
+                            : ack === 2
+                                ? 'delivered'
+                                : ack === 1
+                                    ? 'sent'
+                                    : 'failed',
+
+                    reason:
+                        ack === 0
+                            ? 'WhatsApp server rejected the message'
+                            : null,
+
+                    to: key.remoteJid ?? null,
+                    timestamp: Date.now(),
+                    source: 'messages.update',
+                    baileys_status: baileysStatus,
+                },
+            });
         }
     });
 
     return sock;
+}
+
+function getMessageTimestamp(value) {
+    if (!value) {
+        return Math.floor(Date.now() / 1000);
+    }
+
+    if (typeof value === 'number') {
+        return value;
+    }
+
+    if (typeof value === 'string') {
+        return Number(value);
+    }
+
+    if (typeof value === 'object') {
+        if (typeof value.toNumber === 'function') {
+            return value.toNumber();
+        }
+
+        if (typeof value.low === 'number') {
+            return value.low;
+        }
+    }
+
+    return Number(value) ||
+        Math.floor(Date.now() / 1000);
 }
 
 // ── Direct sender ─────────────────────────────────────────────────────────────
@@ -970,11 +1621,49 @@ async function sendMessageDirect({ sessionId, phone, message, media_path, media_
 
     const sock = session.socket;
 
-    const [result2] = await sock.onWhatsApp(phone);
+    const results = await sock.onWhatsApp(phone);
+    const result2 = results?.[0];
+
     if (!result2?.exists) throw new Error('Number is not on WhatsApp');
-    const chatId = result2.jid;
+
+    const phoneJid = result2.jid;
+
+    logger.info(
+        `[${sessionId}] onWhatsApp result: ${JSON.stringify(result2)}`
+    );
+
+    let destinationJid = phoneJid;
+
+    try {
+        const mappedLid =
+            await sock.signalRepository
+                ?.lidMapping
+                ?.getLIDForPN?.(phoneJid);
+
+        if (mappedLid) {
+            destinationJid = mappedLid.includes('@')
+                ? mappedLid
+                : `${mappedLid}@lid`;
+
+            logger.info(
+                `[${sessionId}] Using mapped LID: ${phoneJid} → ${destinationJid}`
+            );
+        } else {
+            logger.info(
+                `[${sessionId}] No LID mapping found for ${phoneJid}; using PN JID`
+            );
+        }
+    } catch (error) {
+        logger.warn(
+            `[${sessionId}] LID lookup failed for ${phoneJid}: ${error.message}`
+        );
+    }
+
+    logger.info(
+        `[${sessionId}] Final send destination: ${destinationJid}`
+    );
+    const chatId = destinationJid;
     logger.info(chatId);
-    //const chatId = `${phone}@s.whatsapp.net`;
 
     // ── REAL Baileys connection check ──────────────────────────────────────
     // Check 1: Do we have a user identity?
@@ -1189,7 +1878,8 @@ app.post('/send', gatewayAuth, async (req, res) => {
 app.post('/send-media', gatewayAuth, upload.single('file'), async (req, res) => {
     const { sessionId, to, caption, original_filename, mime_type, message_id } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    if (!sessionId) { try { fs.unlinkSync(req.file.path); } catch { } return res.status(400).json({ error: 'sessionId is required' }); }
+    if (!sessionId) { try { fs.unlinkSync(req.file.path); } catch { } return res.status(400).json({ error: 'sessionId is required' });
+}
 
     const session = sessions.get(sessionId);
     if (!session?.isReady) {
